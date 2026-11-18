@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 
-use super::{args, def, event_decoder, header_bits};
-use crate::model::{CombineStatus, DiagKind, KevFile, TraceEvent};
+use super::{HeaderBits, args, def, event_decoder, header_bits, make_header};
+use crate::model::{CombineStatus, DiagKind, KevFile, OrphanStructure, TraceEvent};
 use crate::tp_format::Missing;
 
 pub(crate) fn write(kev: &KevFile, out: &mut impl Write) -> io::Result<()> {
@@ -31,7 +31,7 @@ pub(crate) fn write(kev: &KevFile, out: &mut impl Write) -> io::Result<()> {
 
     // 診断の情報を events の番号で引けるようにする
     let mut trunc: HashMap<usize, u64> = HashMap::new();
-    let mut orphans: Vec<(usize, usize, u64)> = Vec::new(); // (表示位置, events の番号, スロットの番号)
+    let mut orphans: Vec<(usize, usize, u64, u32)> = Vec::new(); // (表示位置, events の番号, スロットの番号, 構造)
     for d in &kev.diag {
         match d.kind {
             DiagKind::Truncated {
@@ -44,20 +44,26 @@ pub(crate) fn write(kev: &KevFile, out: &mut impl Write) -> io::Result<()> {
             DiagKind::Orphan {
                 event_index,
                 slot_number,
+                structure,
                 display_before,
-            } => orphans.push((display_before, event_index, slot_number)),
+            } => {
+                let st = match structure {
+                    OrphanStructure::CC => def::STRUCT_CC,
+                    OrphanStructure::CE => def::STRUCT_CE,
+                };
+                orphans.push((display_before, event_index, slot_number, st))
+            }
             _ => {}
         }
     }
     orphans.sort_unstable();
     let mut next_orphan = 0;
     let mut write_orphans = |out: &mut dyn Write, upto: usize| -> io::Result<()> {
-        while let Some(&(at, idx, n)) = orphans.get(next_orphan)
+        while let Some(&(at, idx, n, st)) = orphans.get(next_orphan)
             && at <= upto
         {
             let ev = &kev.events[idx];
-            let raw = [0, 1, 2, 3].map(|i| ev.payloads.get(i).copied().unwrap_or(0));
-            out.write_all(diag_line(args::DIAG_ORPHAN, n, ev, &raw).as_bytes())?;
+            out.write_all(diag_line(args::DIAG_ORPHAN, n, ev, &first_slot(ev, st)).as_bytes())?;
             out.write_all(le)?;
             next_orphan += 1;
         }
@@ -69,7 +75,7 @@ pub(crate) fn write(kev: &KevFile, out: &mut impl Write) -> io::Result<()> {
         if ev.combine_status == CombineStatus::Orphan {
             continue;
         }
-        let raw = first_slot(ev);
+        let raw = first_slot(ev, event_structure(ev));
         if let Some(&n) = trunc.get(&i) {
             out.write_all(diag_line(args::DIAG_TRUNC, n, ev, &raw).as_bytes())?;
             out.write_all(le)?;
@@ -78,8 +84,8 @@ pub(crate) fn write(kev: &KevFile, out: &mut impl Write) -> io::Result<()> {
             out.write_all(diag_line(args::DIAG_UNKNOWN, 0, ev, &raw).as_bytes())?;
             out.write_all(le)?;
         }
-        let words = ev.payload_words();
-        if let Some(l) = event_decoder::format(ev.int_class_id, ev.int_event_id, &words, Missing::Omit) {
+        let words = &ev.payloads;
+        if let Some(l) = event_decoder::format(ev.int_class_id, ev.int_event_id, words, Missing::Omit) {
             let line = format!(
                 "t:0x{:08x} CPU:{:02} {:<cw$}:{:<nw$}{}",
                 ev.timestamp_cycles as u32,
@@ -101,22 +107,26 @@ pub(crate) fn write(kev: &KevFile, out: &mut impl Write) -> io::Result<()> {
     out.flush()
 }
 
-/// イベントの先頭スロットの 4 words(Truncated・Orphan は生の words、それ以外は組み直す)
-fn first_slot(ev: &TraceEvent) -> [u32; 4] {
-    if ev.combine_status != CombineStatus::Complete {
-        return [0, 1, 2, 3].map(|i| ev.payloads.get(i).copied().unwrap_or(0));
-    }
-    let structure = if ev.payloads.len() > 2 {
+/// イベントの先頭スロットの 4 words を TraceEvent から組み直す
+fn first_slot(ev: &TraceEvent, structure: u32) -> [u32; 4] {
+    let h = make_header(HeaderBits {
+        structure,
+        cpu: ev.cpu_id,
+        flags: ev.flags,
+        class: ev.int_class_id,
+        event: ev.int_event_id,
+    });
+    let p = |i: usize| ev.payloads.get(i).copied().unwrap_or(0);
+    [h, ev.timestamp_cycles as u32, p(0), p(1)]
+}
+
+/// orphan でないイベントの先頭スロットの構造(組は CB、それ以外は S)
+fn event_structure(ev: &TraceEvent) -> u32 {
+    if ev.combine_status == CombineStatus::Truncated || ev.payloads.len() > 2 {
         def::STRUCT_CB
     } else {
         def::STRUCT_S
-    };
-    let h = (structure << def::STRUCT_SHIFT)
-        | ((ev.cpu_id as u32) << def::CPU_SHIFT)
-        | ((ev.int_class_id as u32) << def::CLASS_SHIFT)
-        | ((ev.int_event_id as u32) << def::EVENT_SHIFT);
-    let p = |i: usize| ev.payloads.get(i).copied().unwrap_or(0);
-    [h, ev.timestamp_cycles as u32, p(0), p(1)]
+    }
 }
 
 /// 診断の行を作る

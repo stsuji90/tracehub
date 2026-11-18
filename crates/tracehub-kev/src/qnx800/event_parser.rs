@@ -9,7 +9,9 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::{args, def, event_decoder, header_bits, semantic_ids};
-use crate::model::{CombineStatus, DiagInfo, DiagKind, DisplayStatus, KevHeader, TraceEvent, TruncateReason};
+use crate::model::{
+    CombineStatus, DiagInfo, DiagKind, DisplayStatus, KevHeader, OrphanStructure, TraceEvent, TruncateReason,
+};
 use crate::tp_format::Missing;
 
 /// スロットの word の数
@@ -277,6 +279,7 @@ fn merge(slots: &[Slot], streams: &std::collections::BTreeMap<u8, Vec<usize>>) -
 #[derive(Debug)]
 struct Item {
     cpu: u8,
+    flags: u8,
     class: u8,
     event: u16,
     timestamp_cycles: u64,
@@ -287,8 +290,8 @@ struct Item {
     open: bool,
     /// 各スロットの payloads
     payloads: Vec<u32>,
-    /// 各スロットの生の words(組と orphan だけ)
-    raw: Vec<u32>,
+    /// orphan のスロットの構造
+    orphan: Option<OrphanStructure>,
     /// 途切れた理由と、途切れた時刻
     truncated: Option<(TruncateReason, u64)>,
 }
@@ -353,10 +356,6 @@ impl Combiner<'_> {
 
     fn emit(&mut self, it: Item) {
         let index = self.events.len();
-        let words = match it.status {
-            CombineStatus::Complete => it.payloads,
-            _ => it.raw,
-        };
         let (class_id, event_id) = semantic_ids(it.class, it.event);
         let mut display = DisplayStatus::Silent;
         match it.status {
@@ -370,20 +369,13 @@ impl Combiner<'_> {
                     kind: DiagKind::Orphan {
                         event_index: index,
                         slot_number: it.slot_number,
+                        structure: it.orphan.unwrap_or(OrphanStructure::CC),
                         display_before: 0,
                     },
                 });
             }
             _ => {
                 self.numbered.push(index);
-                let payloads = if it.status == CombineStatus::Complete {
-                    words.clone()
-                } else {
-                    words
-                        .chunks(SLOT_WORDS_NUM)
-                        .flat_map(|s| s[2..].iter().copied())
-                        .collect()
-                };
                 if let Some((reason, ts)) = it.truncated {
                     display = DisplayStatus::Display;
                     self.diag.push(DiagInfo {
@@ -397,7 +389,7 @@ impl Combiner<'_> {
                     });
                 }
                 if unknown_line(it.class, it.event)
-                    || event_decoder::format(it.class, it.event, &payloads, Missing::Omit).is_some()
+                    || event_decoder::format(it.class, it.event, &it.payloads, Missing::Omit).is_some()
                 {
                     display = DisplayStatus::Display;
                 }
@@ -410,9 +402,10 @@ impl Combiner<'_> {
             event_id,
             int_class_id: it.class,
             int_event_id: it.event,
+            flags: it.flags,
             combine_status: it.status,
             display_status: display,
-            payloads: words,
+            payloads: it.payloads,
         });
     }
 }
@@ -439,8 +432,9 @@ fn combine(slots: &[Slot], order: &[usize], diag: &mut Vec<DiagInfo>) -> Vec<Tra
         let b = header_bits(s.words[0]);
         let ts = s.timestamp_cycles;
         last_ts = ts;
-        let item = |status, open, raw: Vec<u32>| Item {
+        let item = |status, open, orphan| Item {
             cpu: b.cpu,
+            flags: b.flags,
             class: b.class,
             event: b.event,
             timestamp_cycles: ts,
@@ -448,29 +442,35 @@ fn combine(slots: &[Slot], order: &[usize], diag: &mut Vec<DiagInfo>) -> Vec<Tra
             status,
             open,
             payloads: vec![s.words[2], s.words[3]],
-            raw,
+            orphan,
             truncated: None,
         };
         let key: Key = (b.cpu, b.class, b.event, s.words[1]);
         match b.structure {
-            def::STRUCT_S => c.push(item(CombineStatus::Complete, false, Vec::new()), ts),
+            def::STRUCT_S => c.push(item(CombineStatus::Complete, false, None), ts),
             def::STRUCT_CB => {
                 if let Some(&old) = c.open.get(&key) {
                     c.truncate(old, TruncateReason::SameKeyCb, ts);
                 }
-                c.push(item(CombineStatus::Complete, true, s.words.to_vec()), ts);
+                c.push(item(CombineStatus::Complete, true, None), ts);
             }
             _ => match c.open.get(&key).copied() {
                 Some(seq) => {
                     let it = &mut c.q[(seq - c.base) as usize];
                     it.payloads.extend_from_slice(&s.words[2..]);
-                    it.raw.extend_from_slice(&s.words);
                     if b.structure == def::STRUCT_CE {
                         it.open = false;
                         c.open.remove(&key);
                     }
                 }
-                None => c.push(item(CombineStatus::Orphan, false, s.words.to_vec()), ts),
+                None => {
+                    let st = if b.structure == def::STRUCT_CE {
+                        OrphanStructure::CE
+                    } else {
+                        OrphanStructure::CC
+                    };
+                    c.push(item(CombineStatus::Orphan, false, Some(st)), ts)
+                }
             },
         }
         c.drain(ts);
@@ -556,14 +556,15 @@ mod tests {
             ]
         );
         assert_eq!(ev[3].payloads, vec![1, 2, 0x6261, 0]);
-        assert_eq!(ev[4].payloads, s[5].to_vec());
-        assert_eq!(ev[5].payloads, s[6].to_vec());
+        assert_eq!(ev[4].payloads, s[5][2..].to_vec());
+        assert_eq!(ev[5].payloads, s[6][2..].to_vec());
         assert_eq!(ev[3].timestamp_cycles, (1 << 32) | 0x110);
         assert!(diag.iter().any(|d| matches!(
             d.kind,
             DiagKind::Orphan {
                 slot_number: 6,
                 event_index: 4,
+                structure: OrphanStructure::CC,
                 display_before: 0
             }
         )));

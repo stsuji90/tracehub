@@ -9,4 +9,5 @@ name = "tracehub"
 path = "src/main.rs"
 
 [dependencies]
+log = "0.4"
 tracehub-kev = { path = "../tracehub-kev" }

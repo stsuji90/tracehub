@@ -7,7 +7,29 @@ use std::process::ExitCode;
 
 const USAGE: &str = "使い方: tracehub traceprinter <kev ファイル> <出力ファイル>";
 
+/// ライブラリの警告などを標準エラーに書く
+struct StderrLogger;
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= log::Level::Warn
+    }
+    fn log(&self, r: &log::Record) {
+        if self.enabled(r.metadata()) {
+            let level = match r.level() {
+                log::Level::Error => "エラー",
+                _ => "警告",
+            };
+            eprintln!("{level}: {}", r.args());
+        }
+    }
+    fn flush(&self) {}
+}
+
+static LOGGER: StderrLogger = StderrLogger;
+
 fn main() -> ExitCode {
+    let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Warn));
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.as_slice() {
         [cmd, input, output] if cmd == "traceprinter" => traceprinter(input, output),

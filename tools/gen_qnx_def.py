@@ -7,7 +7,7 @@
 --check   書き込まずに、置いてあるファイルが生成結果と同じかを確かめる(違えば終了コード 1)
 
 def.rs に書くもの:
-  - header のビット配置、構造の値
+  - header のビット配置(フラグを含む)、構造の値
   - 内部クラス ID、CONTROL のイベント番号と payloads の位置、cookie
   - KER_CALL のイベント番号の作り(コール番号のマスク、exit / int / 64 ビットのビット)
   - クラスごとの (内部イベント番号, 名前, セマンティック ID) の表
@@ -163,6 +163,9 @@ def main() -> int:
     cpu_mask, cpu_shift = mask_shift(H.func["_NTO_TRACE_GETCPU"])
     st_mask, st_shift = mask_shift(H.func["_TRACE_GET_STRUCT"])
     structs = [(n, H.value(f"_TRACE_STRUCT_{n}") >> st_shift) for n in ("S", "CB", "CC", "CE")]
+    # フラグ: _NTO_TRACE_PROCESS_INJECTED のビットから CPU の手前まで
+    fl_shift = H.value("_NTO_TRACE_PROCESS_INJECTED").bit_length() - 1
+    fl_mask = (1 << (cpu_shift - fl_shift)) - 1
     classes = [(n[: -len("_C")], v >> cl_shift) for n, v in H.prefixed("_TRACE_")
                if n.endswith("_C") and n not in ("EMPTY_C", "CONTAINER_C")]
     control = [(n, v) for n, v in H.prefixed("_TRACE_CONTROL_") if n != "C"]
@@ -203,6 +206,10 @@ def main() -> int:
         f"pub const CPU_MASK: u32 = {cpu_mask:#x};",
         f"pub const STRUCT_SHIFT: u32 = {st_shift};",
         f"pub const STRUCT_MASK: u32 = {st_mask:#x};",
+        "/// フラグ(_NTO_TRACE_PROCESS_INJECTED のビットから CPU の手前まで)",
+        f"pub const FLAGS_SHIFT: u32 = {fl_shift};",
+        f"pub const FLAGS_MASK: u32 = {fl_mask:#x};",
+        f"pub const FLAG_PROCESS_INJECTED: u8 = {H.value('_NTO_TRACE_PROCESS_INJECTED') >> fl_shift:#x};",
         "",
         "// ---- 構造(_TRACE_STRUCT_*。シフト後の値)",
     ]

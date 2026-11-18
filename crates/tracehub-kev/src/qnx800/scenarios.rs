@@ -460,7 +460,7 @@ fn combine_window() -> Vec<Slot> {
     let (_, running) = code("PR_TH", "RUNNING");
     let ker = def::CLASS_KER_CALL;
     let sendv = event_code(ker, "MSG_SENDV", "ENTER", false).unwrap();
-    let ab = u32::from_le_bytes(*b"ab  ");
+    let ab = u32::from_le_bytes(*b"ab\0\0");
     let win = args::COMBINE_WINDOW;
     let per = 1000usize; // 1 トレースバッファの本体のスロット数の上限
     let mut out = Vec::new();

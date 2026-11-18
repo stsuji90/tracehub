@@ -75,25 +75,12 @@ pub struct TraceEvent {
     pub int_class_id: u8,
     /// kev に書かれた内部イベント番号
     pub int_event_id: u16,
+    /// header のフラグ(ビット 0 = `_NTO_TRACE_PROCESS_INJECTED`)。組は CB のフラグ
+    pub flags: u8,
     pub combine_status: CombineStatus,
     pub display_status: DisplayStatus,
-    /// Complete: 各スロットの payloads(word[2]・word[3])をつないだもの。
-    /// Truncated・Orphan: 各スロットの生の 4 words(header を含む)をつないだもの
+    /// 各スロットの payloads(word[2]・word[3])をつないだもの。S と Orphan は 2 語
     pub payloads: Vec<u32>,
-}
-
-impl TraceEvent {
-    /// 解釈に使う payloads(Truncated・Orphan では生の words から word[2]・word[3] を取り出す)
-    pub fn payload_words(&self) -> Vec<u32> {
-        match self.combine_status {
-            CombineStatus::Complete => self.payloads.clone(),
-            _ => self
-                .payloads
-                .chunks(4)
-                .flat_map(|s| s.iter().skip(2).copied())
-                .collect(),
-        }
-    }
 }
 
 /// 組み立ての結果
@@ -134,6 +121,8 @@ pub enum DiagKind {
         event_index: usize,
         /// traceprinter が表示する番号(merge した順のスロットの通し番号。1 から)
         slot_number: u64,
+        /// スロットの構造
+        structure: OrphanStructure,
         /// traceprinter が ORPHAN 行を出す位置(この番号の `KevFile::events` の行の前。末尾なら events の長さ)
         display_before: usize,
     },
@@ -165,6 +154,13 @@ pub enum DiagKind {
     TrailingBytes { bytes: u64 },
 }
 
+/// orphan のスロットの構造
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OrphanStructure {
+    CC,
+    CE,
+}
+
 /// 組が途切れた理由
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TruncateReason {
@@ -187,8 +183,8 @@ pub enum KevError {
     HeaderItemTooLong { key: String, len: usize },
     /// `TRACE_SYSPAGE_LEN` の分のバイトが無い
     SyspageTooShort { expected: u64, actual: u64 },
-    /// `TRACE_SYS_RELEASE` が無い、または対応していない版
-    UnsupportedVersion { release: Option<String> },
+    /// `TRACE_SYS_RELEASE` が対応していない版(無ければ 8.0 として読む)
+    UnsupportedVersion { release: String },
 }
 
 impl std::fmt::Display for KevError {
@@ -200,8 +196,7 @@ impl std::fmt::Display for KevError {
             KevError::SyspageTooShort { expected, actual } => {
                 write!(f, "syspage が足りません({expected} バイトのはずが {actual} バイト)")
             }
-            KevError::UnsupportedVersion { release: None } => write!(f, "ヘッダに TRACE_SYS_RELEASE がありません"),
-            KevError::UnsupportedVersion { release: Some(r) } => write!(f, "対応していない QNX の版です: {r}"),
+            KevError::UnsupportedVersion { release } => write!(f, "対応していない QNX の版です: {release}"),
         }
     }
 }

@@ -36,8 +36,8 @@ kev の解釈は公式に公開されていない。tracehub の解釈は、trac
 | トレースバッファ | CPU ごとのバッファ。kev では、同じ CPU のスロットが連続した範囲で、TIME・BUFFER で始まり BUFFER_END で終わる |
 | CPU 別スロット列 | ある CPU のスロットを、ファイルの順に並べたもの |
 | reconstruct_timestamp | CPU 別スロット列で、timestamp_cycles_low32 に上位 32 ビットを補って 64 ビットの時刻にする処理(§6.3) |
-| merge | CPU 別スロット列を、時刻の順に 1 列にまとめる処理(§6.4) |
-| combine | merge した列のスロットから、組を組み立てる処理(§6.5) |
+| merge | CPU 別スロット列を、時刻の順に 1 列にまとめる処理(§6.5) |
+| combine | merge した列のスロットから、組を組み立てる処理(§6.6) |
 | 項目 | combine の単位。S のイベント・組・orphan のスロットがそれぞれ 1 項目 |
 | 内部 ID | kev に書かれている番号。内部クラス ID(`int_class_id`)と内部イベント ID(`int_event_id`)。QNX の版に依存する |
 | セマンティック ID | tracehub が決める、QNX の版に依存しない番号。クラス ID(`class_id`)とイベント ID(`event_id`)(§8) |
@@ -165,9 +165,10 @@ pub struct TraceEvent {
     pub event_id: EventId,
     pub int_class_id: u8,            // header の内部クラス
     pub int_event_id: u16,           // header の内部イベント番号
+    pub flags: u8,                   // header のフラグ(ビット 0 = _NTO_TRACE_PROCESS_INJECTED)。組は CB のフラグ
     pub combine_status: CombineStatus,
     pub display_status: DisplayStatus,
-    pub payloads: Vec<u32>,          // 下の表
+    pub payloads: Vec<u32>,          // 各スロットの payloads(word[2]・word[3])をつないだもの
 }
 
 pub enum CombineStatus { Complete, Truncated, Orphan }
@@ -176,17 +177,16 @@ pub enum DisplayStatus { Display, Silent }
 
 | combine_status | 意味 | payloads |
 |---|---|---|
-| `Complete` | S のスロット 1 つのイベント、または CB から CE までそろった組 | 各スロットの payloads(word[2]・word[3])をつないだもの。S なら 2 語 |
-| `Truncated` | CE が来ないまま途切れた組(§6.5) | 集まった各スロットの**生の 4 words**(header を含む)をつないだもの |
-| `Orphan` | 組み立て中の組が無いのに来た CC / CE のスロット 1 つ | そのスロットの**生の 4 words**(header を含む) |
+| `Complete` | S のスロット 1 つのイベント、または CB から CE までそろった組 | S なら 2 語、組なら 2 × スロット数 |
+| `Truncated` | CE が来ないまま途切れた組(§6.6) | 集まったスロットの分 |
+| `Orphan` | 組み立て中の組が無いのに来た CC / CE のスロット 1 つ | 2 語 |
 
 | display_status | 意味 |
 |---|---|
 | `Display` | traceprinter が何かを出力するもの(イベントの行、または TRUNC・ORPHAN・UNKNOW の行) |
 | `Silent` | traceprinter が何も出力しないもの(header が 0 のスロット、書式で出力しないと決まっているイベント、書式の無いイベントなど) |
 
-- Truncated と Orphan で生の words を持つのは、traceprinter の診断の行(TRUNC・ORPHAN)がスロットの 4 words をそのまま表示するため。header のフラグ・構造(CC / CE)もここから分かる。
-- `payload_words()` は、解釈に使う payloads を返す(Truncated・Orphan では各スロットの word[2]・word[3] を取り出す)。
+- traceprinter の診断の行(TRUNC・ORPHAN・UNKNOW)はスロットの words を表示する。tracehub は先頭スロットの words を TraceEvent のフィールド(構造・CPU・フラグ・内部 ID・時刻・payloads)から組み直す。構造は、Orphan なら DiagInfo の `structure`(CC / CE)、組(Complete で 3 語以上、または Truncated)なら CB、それ以外は S。
 - 時刻は組では CB(Orphan ではそのスロット)の時刻。
 
 ### 5.4 DiagInfo
@@ -201,7 +201,7 @@ pub struct DiagInfo {
 
 | DiagKind | 確定するとき | 持つ情報 |
 |---|---|---|
-| `Orphan` | CC / CE に組み立て中の組が無かった | TraceEvent の番号、traceprinter が表示する番号(merge した順のスロットの通し番号)、ORPHAN 行を出す位置(§9.3) |
+| `Orphan` | CC / CE に組み立て中の組が無かった | TraceEvent の番号、traceprinter が表示する番号(merge した順のスロットの通し番号)、スロットの構造(CC / CE)、ORPHAN 行を出す位置(§9.3) |
 | `Truncated` | 組が途切れた | TraceEvent の番号、traceprinter が表示する番号(orphan を除くイベントの通し番号)、途切れた理由(同じ鍵の CB / 窓 / 列の終わり) |
 | `SeqGap` | BUFFER の通番が、同じ CPU の前の BUFFER の通番 + 1 でなかった | 前の通番、今の通番 |
 | `CountMismatch` | BUFFER_END で、BUFFER に書かれたスロット数と実際の数(直前の TIME から BUFFER_END まで)が違った | 通番、BUFFER の数、実際の数 |
@@ -416,7 +416,7 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 
 - 行の書式は args.rs が持つ。番号と位置は parse() が DiagInfo に入れ、traceprinter.rs は TraceEvent と DiagInfo から行を作る。
 - ORPHAN 行の位置: traceprinter はイベントの行を 1022 件ためてから書くので、ORPHAN 行は「それまでに出た orphan を除くイベントの数 − 1022」件目の後(0 件未満なら先頭)に出る。DiagInfo の `display_before` はその次のイベントの events の番号。
-- UNKNOW 行の header は、Complete のイベントでは TraceEvent から組み直す(フラグは 0 とする)。
+- 診断の行の words は、TraceEvent から組み直す(§5.3)。
 
 ---
 
@@ -429,7 +429,8 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 | ヘッダの項目(キー::値)が 2048 バイト以上 | エラー | 内部エラー 17 |
 | `TRACE_SYSPAGE_LEN` の分のバイトが無い | エラー | 内部エラー 12 |
 | `TRACE_SYSPAGE_LEN` が無い・空 | 0 とする | 読む |
-| `TRACE_SYS_RELEASE` が無い・対応していない版 | エラー | 読む(tracehub は版の定義を選べないため) |
+| `TRACE_SYS_RELEASE` が無い | QNX 8.0 として読み、警告(log)を出す | 読む |
+| `TRACE_SYS_RELEASE` が対応していない版 | エラー | 読む(tracehub は版の定義を選べないため) |
 | イベント部の異常(トレースバッファの不整合、組の異常など) | エラーにしない。DiagInfo に記録して続ける | 読む(場合によって内部エラー) |
 
 ---
@@ -450,8 +451,9 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 
 ## 12. 依存とロギング
 
-- ライブラリ(tracehub-kev)と CLI は標準ライブラリだけを使う(CLI の引数は自分で解析する)。
-- ライブラリは何も出力しない。気づいたことは DiagInfo で返す。ロギング(`log` クレート)は必要になってから加える。
+- 依存は `log` クレートだけ(ライブラリと CLI)。CLI の引数は自分で解析する。
+- ライブラリは直接何も出力しない。イベント部の異常は DiagInfo で返す。
+- エラーにも DiagInfo にもならない、知らせたいこと(`TRACE_SYS_RELEASE` が無いので 8.0 として読んだ、など)は `log::warn!` で出す。出力先は使う側が決める(CLI は標準エラーに `警告: …` と書く)。
 
 ---
 

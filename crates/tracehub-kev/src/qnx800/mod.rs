@@ -20,19 +20,30 @@ use crate::ids::{ClassId, EventId};
 /// header の各部
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HeaderBits {
+    pub structure: u32,
     pub cpu: u8,
+    pub flags: u8,
     pub class: u8,
     pub event: u16,
-    pub structure: u32,
 }
 
 pub(crate) fn header_bits(h: u32) -> HeaderBits {
     HeaderBits {
+        structure: (h >> def::STRUCT_SHIFT) & def::STRUCT_MASK,
         cpu: ((h >> def::CPU_SHIFT) & def::CPU_MASK) as u8,
+        flags: ((h >> def::FLAGS_SHIFT) & def::FLAGS_MASK) as u8,
         class: ((h >> def::CLASS_SHIFT) & def::CLASS_MASK) as u8,
         event: ((h >> def::EVENT_SHIFT) & def::EVENT_MASK) as u16,
-        structure: (h >> def::STRUCT_SHIFT) & def::STRUCT_MASK,
     }
+}
+
+/// header を組み立てる(header_bits の逆)
+pub(crate) fn make_header(b: HeaderBits) -> u32 {
+    ((b.structure & def::STRUCT_MASK) << def::STRUCT_SHIFT)
+        | ((b.cpu as u32 & def::CPU_MASK) << def::CPU_SHIFT)
+        | ((b.flags as u32 & def::FLAGS_MASK) << def::FLAGS_SHIFT)
+        | ((b.class as u32 & def::CLASS_MASK) << def::CLASS_SHIFT)
+        | ((b.event as u32 & def::EVENT_MASK) << def::EVENT_SHIFT)
 }
 
 /// 定義のある内部クラス(これ以外のクラスのイベントには traceprinter が UNKNOW 行を出す)

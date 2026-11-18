@@ -17,6 +17,8 @@ const KEY_CYCLES_PER_SEC: &str = "TRACE_CYCLES_PER_SEC";
 const KEY_CPU_NUM: &str = "TRACE_CPU_NUM";
 const KEY_SYSPAGE_LEN: &str = "TRACE_SYSPAGE_LEN";
 const KEY_SYS_RELEASE: &str = "TRACE_SYS_RELEASE";
+/// TRACE_SYS_RELEASE が無いときの版
+const DEFAULT_VERSION: QnxVersion = QnxVersion::V800;
 /// traceprinter が読めない、ヘッダの項目(キー::値)の長さ
 const ITEM_LEN_LIMIT: usize = 2048;
 
@@ -65,12 +67,17 @@ pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
             return Err(KevError::MissingKey { key: key.into() });
         }
     }
-    let release = get(KEY_SYS_RELEASE);
-    let version = release
-        .and_then(QnxVersion::from_release)
-        .ok_or_else(|| KevError::UnsupportedVersion {
-            release: release.map(String::from),
-        })?;
+    // TRACE_SYS_RELEASE が無ければ DEFAULT_VERSION として読む(traceprinter は版を見ずに読む)
+    let version = match get(KEY_SYS_RELEASE) {
+        None => {
+            log::warn!(
+                "ヘッダに TRACE_SYS_RELEASE がありません。QNX {} として読みます",
+                DEFAULT_VERSION.name()
+            );
+            DEFAULT_VERSION
+        }
+        Some(r) => QnxVersion::from_release(r).ok_or_else(|| KevError::UnsupportedVersion { release: r.into() })?,
+    };
     let num = |k: &str| get(k).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0);
     let little_endian = get(KEY_LITTLE_ENDIAN).is_some() || get(KEY_BIG_ENDIAN).is_none();
     let header = KevHeader {
@@ -129,6 +136,8 @@ mod tests {
         assert!(matches!(parse(no_ver.as_bytes()), Err(KevError::MissingKey { .. })));
         let v7 = OK.replace("8.0.0", "7.1.0");
         assert!(matches!(parse(v7.as_bytes()), Err(KevError::UnsupportedVersion { .. })));
+        let no_rel = OK.replace("TRACE_SYS_RELEASE::8.0.0", "");
+        assert_eq!(parse(no_rel.as_bytes()).unwrap().0.version, DEFAULT_VERSION);
         let long = OK.replace("a::b", &"x".repeat(3000));
         assert!(matches!(
             parse(long.as_bytes()),

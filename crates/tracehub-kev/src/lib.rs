@@ -40,12 +40,12 @@ pub fn decode(version: QnxVersion, event: &TraceEvent, opts: &DecodeOptions) -> 
         MissingStyle::Marked if event.combine_status == CombineStatus::Truncated => Missing::Mark("(truncated)"),
         MissingStyle::Marked => Missing::Mark("(missing)"),
     };
-    let words = event.payload_words();
+    let words = &event.payloads;
     let (class, code) = (event.int_class_id, event.int_event_id);
     match version {
         QnxVersion::V800 => {
             if event.combine_status != CombineStatus::Orphan
-                && let Some(l) = qnx800::event_decoder::format(class, code, &words, missing)
+                && let Some(l) = qnx800::event_decoder::format(class, code, words, missing)
             {
                 return DecodedEvent {
                     class_name: l.class,
@@ -55,7 +55,7 @@ pub fn decode(version: QnxVersion, event: &TraceEvent, opts: &DecodeOptions) -> 
             }
             let (c, n) = qnx800::event_decoder::names(class, code);
             let mut args = String::new();
-            tp_format::hex_words(&words, &mut args);
+            tp_format::hex_words(words, &mut args);
             DecodedEvent {
                 class_name: c.unwrap_or_else(|| format!("UNKNOWN({class})")),
                 event_name: n.filter(|n| !n.is_empty()).unwrap_or_else(|| code.to_string()),

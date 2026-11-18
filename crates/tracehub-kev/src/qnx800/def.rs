@@ -14,6 +14,10 @@ pub const CPU_SHIFT: u32 = 24;
 pub const CPU_MASK: u32 = 0x3f;
 pub const STRUCT_SHIFT: u32 = 30;
 pub const STRUCT_MASK: u32 = 0x3;
+/// フラグ(_NTO_TRACE_PROCESS_INJECTED のビットから CPU の手前まで)
+pub const FLAGS_SHIFT: u32 = 16;
+pub const FLAGS_MASK: u32 = 0xff;
+pub const FLAG_PROCESS_INJECTED: u8 = 0x1;
 
 // ---- 構造(_TRACE_STRUCT_*。シフト後の値)
 pub const STRUCT_S: u32 = 0;
