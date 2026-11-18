@@ -74,6 +74,7 @@ on,TRACE_VER_MAJOR::,2
 - kev のヘッダは、**有効な行の `key` と `value` を上から順にそのままつないだ文字列**になる。区切りや改行は自動では入らない。
 - 前後の空白もそのまま文字として出力する。
 - 使える文字は latin-1(0〜255)だけ。それ以外の文字があると kev を書けない。
+- traceprinter は値を NUL の手前まで、印字可能な ASCII(0x20〜0x7E)だけ表示する。ふつうは印字可能な ASCII だけで書く。
 
 例: 上の 2 行は `TRACE_HEADER_BEGIN::TRACE_VER_MAJOR::2` になる。
 
@@ -94,7 +95,7 @@ on,TRACE_VER_MAJOR::,2
 | `TRACE_HEADER_BEGIN::` | (空) | 必須・先頭 | ヘッダの始まり |
 | `TRACE_VER_MAJOR::` | `2` | 必須 | kev 形式の版。無いと traceprinter が読まない |
 | `TRACE_VER_MINOR::` | `01` | 必須 | 同上 |
-| `TRACE_LITTLE_ENDIAN::` | `TRUE` | 推奨 | スロットのバイト順。このキーがあればリトルエンディアン。無く `TRACE_BIG_ENDIAN::` があればビッグエンディアン。どちらも無ければリトルエンディアンとして扱う |
+| `TRACE_LITTLE_ENDIAN::` | `TRUE` | 必須 | スロットのバイト順。このキーがあればリトルエンディアン。無く `TRACE_BIG_ENDIAN::` があればビッグエンディアン。どちらも無いと traceprinter が読まない(内部エラー 11) |
 | `TRACE_ENCODING::` | `16 byte events` | 推奨 | これ以外の値は扱わない |
 | `TRACE_CYCLES_PER_SEC::` | `19200000` | 推奨 | 時刻(クロック値)の周波数 |
 | `TRACE_CPU_NUM::` | `1` | 推奨 | CPU の数。スロットの CPU 番号は 0 〜 CPU_NUM−1 にする |

@@ -1,22 +1,25 @@
 //! kev のヘッダの読み取り(QNX の版に共通)。
 //!
-//! ヘッダは `TRACE_<キー>::<値>` が区切りなしに続く ASCII の文字列で、`TRACE_HEADER_END::` で終わる。
+//! ヘッダは `TRACE_<キー>::<値>` が区切りなしに続く文字列で、`TRACE_HEADER_END::` で終わる。
 //! キーは `TRACE_` + 英大文字・数字・`_` + `::`。値は次のキーの直前まで。
-//! 誤りの基準は traceprinter に合わせる。
+//! 誤りの基準と値の文字は traceprinter に合わせる(実測):
+//! - 値は NUL の手前まで、印字可能な ASCII(0x20〜0x7E)だけを残す(traceprinter はそれ以外を表示しない)
+//! - 形式の版のキー(`VER_MAJOR`・`VER_MINOR`)とエンディアンのキー(`LITTLE_ENDIAN`・`BIG_ENDIAN` のどちらか)が要る
 
 use crate::model::{KevError, KevHeader, QnxVersion};
 
 const PREFIX: &[u8] = b"TRACE_";
 const POSTFIX: &[u8] = b"::";
-const KEY_END: &str = "TRACE_HEADER_END";
-const KEY_VER_MAJOR: &str = "TRACE_VER_MAJOR";
-const KEY_VER_MINOR: &str = "TRACE_VER_MINOR";
-const KEY_LITTLE_ENDIAN: &str = "TRACE_LITTLE_ENDIAN";
-const KEY_BIG_ENDIAN: &str = "TRACE_BIG_ENDIAN";
-const KEY_CYCLES_PER_SEC: &str = "TRACE_CYCLES_PER_SEC";
-const KEY_CPU_NUM: &str = "TRACE_CPU_NUM";
-const KEY_SYSPAGE_LEN: &str = "TRACE_SYSPAGE_LEN";
-const KEY_SYS_RELEASE: &str = "TRACE_SYS_RELEASE";
+// キーは TRACE_ を除いた名前
+const KEY_END: &str = "HEADER_END";
+const KEY_VER_MAJOR: &str = "VER_MAJOR";
+const KEY_VER_MINOR: &str = "VER_MINOR";
+const KEY_LITTLE_ENDIAN: &str = "LITTLE_ENDIAN";
+const KEY_BIG_ENDIAN: &str = "BIG_ENDIAN";
+const KEY_CYCLES_PER_SEC: &str = "CYCLES_PER_SEC";
+const KEY_CPU_NUM: &str = "CPU_NUM";
+const KEY_SYSPAGE_LEN: &str = "SYSPAGE_LEN";
+const KEY_SYS_RELEASE: &str = "SYS_RELEASE";
 /// TRACE_SYS_RELEASE が無いときの版
 const DEFAULT_VERSION: QnxVersion = QnxVersion::V800;
 /// traceprinter が読めない、ヘッダの項目(キー::値)の長さ
@@ -24,16 +27,17 @@ const ITEM_LEN_LIMIT: usize = 2048;
 
 /// ヘッダを読む。戻り値: (ヘッダ, ヘッダの直後のバイト位置)
 pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
-    let mut keys: Vec<(String, usize, usize)> = Vec::new(); // (キー, キーの位置, 値の位置)
+    let mut keys: Vec<(String, usize, usize)> = Vec::new(); // (キー, 項目の位置, 値の位置)
     let mut end = None;
     let mut pos = 0;
     while let Some(p) = find(buf, PREFIX, pos) {
-        let mut q = p + PREFIX.len();
+        let k = p + PREFIX.len();
+        let mut q = k;
         while q < buf.len() && (buf[q].is_ascii_uppercase() || buf[q].is_ascii_digit() || buf[q] == b'_') {
             q += 1;
         }
-        if q > p + PREFIX.len() && buf[q..].starts_with(POSTFIX) {
-            let key = latin1(&buf[p..q]);
+        if q > k && buf[q..].starts_with(POSTFIX) {
+            let key = String::from_utf8_lossy(&buf[k..q]).into_owned(); // 英大文字・数字・_ だけ
             let vstart = q + POSTFIX.len();
             let is_end = key == KEY_END;
             keys.push((key, p, vstart));
@@ -43,7 +47,7 @@ pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
                 break;
             }
         } else {
-            pos = p + PREFIX.len();
+            pos = k;
         }
     }
     let end = end.ok_or(KevError::NoHeaderEnd)?;
@@ -57,21 +61,40 @@ pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
                 len: vend - start,
             });
         }
-        keywords.push((key.clone(), latin1(&buf[*vstart..vend])));
+        let raw = &buf[*vstart..vend];
+        let value = ascii_value(raw);
+        if value.len() != raw.len() {
+            log::warn!(
+                "ヘッダの {key} の値に、NUL か印字可能な ASCII 以外のバイトがあります。traceprinter と同じく取り除きます"
+            );
+        }
+        keywords.push((key.clone(), value));
     }
     let get = |k: &str| keywords.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.as_str());
 
     // traceprinter は形式の版のキーが無いと読まない(値は問わない)
     for key in [KEY_VER_MAJOR, KEY_VER_MINOR] {
         if get(key).is_none() {
-            return Err(KevError::MissingKey { key: key.into() });
+            return Err(KevError::MissingKey {
+                key: format!("TRACE_{key}"),
+            });
         }
     }
+    // traceprinter はエンディアンのキーが無いと読まない(LITTLE_ENDIAN があればリトル、無く BIG_ENDIAN があればビッグ)
+    let little_endian = match (get(KEY_LITTLE_ENDIAN), get(KEY_BIG_ENDIAN)) {
+        (Some(_), _) => true,
+        (None, Some(_)) => false,
+        (None, None) => {
+            return Err(KevError::MissingKey {
+                key: format!("TRACE_{KEY_LITTLE_ENDIAN} / TRACE_{KEY_BIG_ENDIAN}"),
+            });
+        }
+    };
     // TRACE_SYS_RELEASE が無ければ DEFAULT_VERSION として読む(traceprinter は版を見ずに読む)
     let version = match get(KEY_SYS_RELEASE) {
         None => {
             log::warn!(
-                "ヘッダに TRACE_SYS_RELEASE がありません。QNX {} として読みます",
+                "ヘッダに TRACE_{KEY_SYS_RELEASE} がありません。QNX {} として読みます",
                 DEFAULT_VERSION.name()
             );
             DEFAULT_VERSION
@@ -79,7 +102,6 @@ pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
         Some(r) => QnxVersion::from_release(r).ok_or_else(|| KevError::UnsupportedVersion { release: r.into() })?,
     };
     let num = |k: &str| get(k).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0);
-    let little_endian = get(KEY_LITTLE_ENDIAN).is_some() || get(KEY_BIG_ENDIAN).is_none();
     let header = KevHeader {
         version,
         cycles_per_sec: num(KEY_CYCLES_PER_SEC),
@@ -91,9 +113,13 @@ pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
     Ok((header, end))
 }
 
-/// latin-1 のバイト列を、1 バイト 1 文字の文字列にする
-pub(crate) fn latin1(b: &[u8]) -> String {
-    b.iter().map(|&c| c as char).collect()
+/// 値のバイト列を、NUL の手前までの印字可能な ASCII だけにする(traceprinter の表示と同じ)
+fn ascii_value(raw: &[u8]) -> String {
+    raw.iter()
+        .take_while(|&&b| b != 0)
+        .filter(|b| (0x20..=0x7e).contains(*b))
+        .map(|&b| b as char)
+        .collect()
 }
 
 fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -124,9 +150,16 @@ mod tests {
         assert_eq!((h.cycles_per_sec, h.cpu_num, h.syspage_len), (19_200_000, 4, 0));
         assert!(h.little_endian);
         let keys: Vec<&str> = h.keywords.iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys[0], "TRACE_HEADER_BEGIN");
-        assert_eq!(*keys.last().unwrap(), "TRACE_HEADER_END");
-        assert_eq!(h.get("TRACE_X_Y"), Some("a::b")); // キーの形でない "::" は値に含まれる
+        assert_eq!(keys[0], "HEADER_BEGIN");
+        assert_eq!(*keys.last().unwrap(), "HEADER_END");
+        assert_eq!(h.get("X_Y"), Some("a::b")); // キーの形でない "::" は値に含まれる
+    }
+
+    #[test]
+    fn values_are_printable_ascii() {
+        assert_eq!(ascii_value(b"caf\xe9-\xe3\x81\x82-\x01-\xff"), "caf---");
+        assert_eq!(ascii_value(b"ab\0cd"), "ab");
+        assert_eq!(ascii_value(b" !~"), " !~");
     }
 
     #[test]
@@ -134,6 +167,10 @@ mod tests {
         assert_eq!(parse(b"TRACE_HEADER_BEGIN::").unwrap_err(), KevError::NoHeaderEnd);
         let no_ver = OK.replace("TRACE_VER_MAJOR::2", "");
         assert!(matches!(parse(no_ver.as_bytes()), Err(KevError::MissingKey { .. })));
+        let no_endian = OK.replace("TRACE_LITTLE_ENDIAN::TRUE", "");
+        assert!(matches!(parse(no_endian.as_bytes()), Err(KevError::MissingKey { .. })));
+        let be = OK.replace("TRACE_LITTLE_ENDIAN::TRUE", "TRACE_BIG_ENDIAN::TRUE");
+        assert!(!parse(be.as_bytes()).unwrap().0.little_endian);
         let v7 = OK.replace("8.0.0", "7.1.0");
         assert!(matches!(parse(v7.as_bytes()), Err(KevError::UnsupportedVersion { .. })));
         let no_rel = OK.replace("TRACE_SYS_RELEASE::8.0.0", "");

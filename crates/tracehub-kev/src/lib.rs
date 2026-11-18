@@ -6,7 +6,8 @@
 //! - [`traceprinter::write`]: traceprinter 互換出力
 //!
 //! kev の解釈は公式に公開されていないので、traceprinter の出力を正として決めている。
-//! 文字列は kev のバイトを 1 バイト 1 文字(latin-1)にしたもの。
+//! ヘッダの値は印字可能な ASCII。イベントの文字列(args など)は payloads のバイトを 1 バイト 1 文字にしたもの
+//! (traceprinter はバイトをそのまま出力するので、文字コードは決まっていない)。
 
 pub mod ids;
 mod kev_header;

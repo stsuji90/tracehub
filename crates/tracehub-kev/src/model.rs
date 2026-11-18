@@ -45,9 +45,10 @@ pub struct KevHeader {
     pub cpu_num: u32,
     /// `TRACE_SYSPAGE_LEN`(無い・空なら 0)
     pub syspage_len: u64,
-    /// スロットのバイト順(`TRACE_LITTLE_ENDIAN` があればリトル、無く `TRACE_BIG_ENDIAN` があればビッグ)
+    /// スロットのバイト順(`TRACE_LITTLE_ENDIAN` があればリトル、無く `TRACE_BIG_ENDIAN` があればビッグ。どちらも無ければエラー)
     pub little_endian: bool,
-    /// キー(`TRACE_` を含み `::` を含まない)と値。kev に書かれた順。同じキーが複数あればすべて持つ
+    /// キー(`TRACE_` と `::` を除いた名前。例: "VER_MAJOR")と値。kev に書かれた順。同じキーが複数あればすべて持つ。
+    /// 値は traceprinter と同じく、NUL の手前までの印字可能な ASCII(0x20〜0x7E)だけを残したもの
     pub keywords: Vec<(String, String)>,
 }
 
@@ -177,7 +178,7 @@ pub enum TruncateReason {
 pub enum KevError {
     /// `TRACE_HEADER_END::` が無い
     NoHeaderEnd,
-    /// `TRACE_VER_MAJOR` / `TRACE_VER_MINOR` が無い
+    /// traceprinter が読むのに要るキー(`TRACE_VER_MAJOR`・`TRACE_VER_MINOR`、エンディアンのキー)が無い
     MissingKey { key: String },
     /// ヘッダの項目(キー::値)が長すぎる
     HeaderItemTooLong { key: String, len: usize },
