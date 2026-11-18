@@ -9,9 +9,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::{args, def, event_decoder, header_bits, semantic_ids};
-use crate::model::{
-    CombineStatus, DiagInfo, DiagKind, DisplayStatus, KevHeader, OrphanStructure, TraceEvent, TruncateReason,
-};
+use crate::model::{CombineStatus, DiagInfo, DiagKind, DisplayStatus, OrphanStructure, TraceEvent, TruncateReason};
 use crate::tp_format::Missing;
 
 /// スロットの word の数
@@ -41,9 +39,9 @@ impl Slot {
 }
 
 /// イベント部(syspage の後ろ)を読んで、イベントの列と異常を返す
-pub(crate) fn parse(header: &KevHeader, data: &[u8]) -> (Vec<TraceEvent>, Vec<DiagInfo>) {
+pub(crate) fn parse(data: &[u8]) -> (Vec<TraceEvent>, Vec<DiagInfo>) {
     let mut diag = Vec::new();
-    let mut slots = read_slots(header, data);
+    let mut slots = read_slots(data);
     let tail = data.len() % SLOT_BYTES;
     if tail != 0 {
         diag.push(DiagInfo {
@@ -63,15 +61,9 @@ pub(crate) fn parse(header: &KevHeader, data: &[u8]) -> (Vec<TraceEvent>, Vec<Di
     (events, diag)
 }
 
-fn read_slots(header: &KevHeader, data: &[u8]) -> Vec<Slot> {
-    let rd = |b: &[u8]| {
-        let a = [b[0], b[1], b[2], b[3]];
-        if header.little_endian {
-            u32::from_le_bytes(a)
-        } else {
-            u32::from_be_bytes(a)
-        }
-    };
+/// スロットを読む(リトルエンディアン)
+fn read_slots(data: &[u8]) -> Vec<Slot> {
+    let rd = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
     data.chunks_exact(SLOT_BYTES)
         .map(|c| Slot {
             timestamp_cycles: 0,
@@ -503,18 +495,7 @@ fn combine(slots: &[Slot], order: &[usize], diag: &mut Vec<DiagInfo>) -> Vec<Tra
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::QnxVersion;
 
-    fn header() -> KevHeader {
-        KevHeader {
-            version: QnxVersion::V800,
-            cycles_per_sec: 1,
-            cpu_num: 2,
-            syspage_len: 0,
-            little_endian: true,
-            keywords: vec![],
-        }
-    }
     fn hw(st: u32, cpu: u32, class: u32, event: u32) -> u32 {
         (st << def::STRUCT_SHIFT) | (cpu << def::CPU_SHIFT) | (class << def::CLASS_SHIFT) | (event << def::EVENT_SHIFT)
     }
@@ -539,7 +520,7 @@ mod tests {
             [hw(2, 0, PR, 320), 0x120, 1, 2],      // orphan の CC
             [hw(1, 0, PR, 320), 0x130, 1, 2],      // 閉じない CB
         ];
-        let (ev, diag) = parse(&header(), &bytes(&s));
+        let (ev, diag) = parse(&bytes(&s));
         let st: Vec<_> = ev
             .iter()
             .map(|e| (e.cpu_id, e.int_event_id, e.combine_status))
@@ -592,7 +573,7 @@ mod tests {
             [hw(0, 0, PR, 1), 0x230, 1, 6],
             // BUFFER_END が無い
         ];
-        let (_, diag) = parse(&header(), &bytes(&s));
+        let (_, diag) = parse(&bytes(&s));
         let kinds: Vec<_> = diag.iter().map(|d| d.kind.clone()).collect();
         for k in [
             DiagKind::CountMismatch {
@@ -621,7 +602,7 @@ mod tests {
             s.push([hw(0, 0, PR, 1), 0x101 + i, 1, 6]);
         }
         s.push([hw(3, 0, PR, 192), 0x100, 0, 0]);
-        let (ev, _) = parse(&header(), &bytes(&s));
+        let (ev, _) = parse(&bytes(&s));
         assert_eq!(ev[0].combine_status, CombineStatus::Truncated);
         assert_eq!(ev.last().unwrap().combine_status, CombineStatus::Orphan);
     }

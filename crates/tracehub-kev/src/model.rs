@@ -45,8 +45,6 @@ pub struct KevHeader {
     pub cpu_num: u32,
     /// `TRACE_SYSPAGE_LEN`(無い・空なら 0)
     pub syspage_len: u64,
-    /// スロットのバイト順(`TRACE_LITTLE_ENDIAN` があればリトル、無く `TRACE_BIG_ENDIAN` があればビッグ。どちらも無ければエラー)
-    pub little_endian: bool,
     /// キー(`TRACE_` と `::` を除いた名前。例: "VER_MAJOR")と値。kev に書かれた順。同じキーが複数あればすべて持つ。
     /// 値は traceprinter と同じく、NUL の手前までの印字可能な ASCII(0x20〜0x7E)だけを残したもの
     pub keywords: Vec<(String, String)>,
@@ -178,8 +176,10 @@ pub enum TruncateReason {
 pub enum KevError {
     /// `TRACE_HEADER_END::` が無い
     NoHeaderEnd,
-    /// traceprinter が読むのに要るキー(`TRACE_VER_MAJOR`・`TRACE_VER_MINOR`、エンディアンのキー)が無い
+    /// traceprinter が読むのに要るキー(`TRACE_VER_MAJOR`・`TRACE_VER_MINOR`)が無い
     MissingKey { key: String },
+    /// リトルエンディアンでない(`TRACE_LITTLE_ENDIAN` が無い)
+    NotLittleEndian,
     /// ヘッダの項目(キー::値)が長すぎる
     HeaderItemTooLong { key: String, len: usize },
     /// `TRACE_SYSPAGE_LEN` の分のバイトが無い
@@ -193,6 +193,12 @@ impl std::fmt::Display for KevError {
         match self {
             KevError::NoHeaderEnd => write!(f, "ヘッダの終わり(TRACE_HEADER_END::)がありません"),
             KevError::MissingKey { key } => write!(f, "ヘッダに {key} がありません"),
+            KevError::NotLittleEndian => {
+                write!(
+                    f,
+                    "リトルエンディアンの kev(ヘッダに TRACE_LITTLE_ENDIAN があるもの)だけを読めます"
+                )
+            }
             KevError::HeaderItemTooLong { key, len } => write!(f, "ヘッダの項目 {key} が長すぎます({len} バイト)"),
             KevError::SyspageTooShort { expected, actual } => {
                 write!(f, "syspage が足りません({expected} バイトのはずが {actual} バイト)")

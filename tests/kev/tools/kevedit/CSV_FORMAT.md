@@ -95,7 +95,7 @@ on,TRACE_VER_MAJOR::,2
 | `TRACE_HEADER_BEGIN::` | (空) | 必須・先頭 | ヘッダの始まり |
 | `TRACE_VER_MAJOR::` | `2` | 必須 | kev 形式の版。無いと traceprinter が読まない |
 | `TRACE_VER_MINOR::` | `01` | 必須 | 同上 |
-| `TRACE_LITTLE_ENDIAN::` | `TRUE` | 必須 | スロットのバイト順。このキーがあればリトルエンディアン。無く `TRACE_BIG_ENDIAN::` があればビッグエンディアン。どちらも無いと traceprinter が読まない(内部エラー 11) |
+| `TRACE_LITTLE_ENDIAN::` | `TRUE` | 必須 | スロットのバイト順。このキーがあればリトルエンディアン。無く `TRACE_BIG_ENDIAN::` があればビッグエンディアン。どちらも無いと traceprinter が読まない(内部エラー 11)。tracehub はリトルエンディアンだけを読む |
 | `TRACE_ENCODING::` | `16 byte events` | 推奨 | これ以外の値は扱わない |
 | `TRACE_CYCLES_PER_SEC::` | `19200000` | 推奨 | 時刻(クロック値)の周波数 |
 | `TRACE_CPU_NUM::` | `1` | 推奨 | CPU の数。スロットの CPU 番号は 0 〜 CPU_NUM−1 にする |

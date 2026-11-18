@@ -4,7 +4,8 @@
 //! キーは `TRACE_` + 英大文字・数字・`_` + `::`。値は次のキーの直前まで。
 //! 誤りの基準と値の文字は traceprinter に合わせる(実測):
 //! - 値は NUL の手前まで、印字可能な ASCII(0x20〜0x7E)だけを残す(traceprinter はそれ以外を表示しない)
-//! - 形式の版のキー(`VER_MAJOR`・`VER_MINOR`)とエンディアンのキー(`LITTLE_ENDIAN`・`BIG_ENDIAN` のどちらか)が要る
+//! - 形式の版のキー(`VER_MAJOR`・`VER_MINOR`)が要る
+//! - リトルエンディアン(`LITTLE_ENDIAN`)だけを読む(ビッグエンディアンは traceprinter と並びが合わないので扱わない)
 
 use crate::model::{KevError, KevHeader, QnxVersion};
 
@@ -15,7 +16,6 @@ const KEY_END: &str = "HEADER_END";
 const KEY_VER_MAJOR: &str = "VER_MAJOR";
 const KEY_VER_MINOR: &str = "VER_MINOR";
 const KEY_LITTLE_ENDIAN: &str = "LITTLE_ENDIAN";
-const KEY_BIG_ENDIAN: &str = "BIG_ENDIAN";
 const KEY_CYCLES_PER_SEC: &str = "CYCLES_PER_SEC";
 const KEY_CPU_NUM: &str = "CPU_NUM";
 const KEY_SYSPAGE_LEN: &str = "SYSPAGE_LEN";
@@ -80,16 +80,10 @@ pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
             });
         }
     }
-    // traceprinter はエンディアンのキーが無いと読まない(LITTLE_ENDIAN があればリトル、無く BIG_ENDIAN があればビッグ)
-    let little_endian = match (get(KEY_LITTLE_ENDIAN), get(KEY_BIG_ENDIAN)) {
-        (Some(_), _) => true,
-        (None, Some(_)) => false,
-        (None, None) => {
-            return Err(KevError::MissingKey {
-                key: format!("TRACE_{KEY_LITTLE_ENDIAN} / TRACE_{KEY_BIG_ENDIAN}"),
-            });
-        }
-    };
+    // リトルエンディアンだけを読む(BIG_ENDIAN だけの kev も、どちらのキーも無い kev もエラー)
+    if get(KEY_LITTLE_ENDIAN).is_none() {
+        return Err(KevError::NotLittleEndian);
+    }
     // TRACE_SYS_RELEASE が無ければ DEFAULT_VERSION として読む(traceprinter は版を見ずに読む)
     let version = match get(KEY_SYS_RELEASE) {
         None => {
@@ -107,7 +101,6 @@ pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
         cycles_per_sec: num(KEY_CYCLES_PER_SEC),
         cpu_num: num(KEY_CPU_NUM) as u32,
         syspage_len: num(KEY_SYSPAGE_LEN),
-        little_endian,
         keywords,
     };
     Ok((header, end))
@@ -148,7 +141,6 @@ mod tests {
         assert_eq!(end, OK.len());
         assert_eq!(h.version, QnxVersion::V800);
         assert_eq!((h.cycles_per_sec, h.cpu_num, h.syspage_len), (19_200_000, 4, 0));
-        assert!(h.little_endian);
         let keys: Vec<&str> = h.keywords.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys[0], "HEADER_BEGIN");
         assert_eq!(*keys.last().unwrap(), "HEADER_END");
@@ -168,9 +160,9 @@ mod tests {
         let no_ver = OK.replace("TRACE_VER_MAJOR::2", "");
         assert!(matches!(parse(no_ver.as_bytes()), Err(KevError::MissingKey { .. })));
         let no_endian = OK.replace("TRACE_LITTLE_ENDIAN::TRUE", "");
-        assert!(matches!(parse(no_endian.as_bytes()), Err(KevError::MissingKey { .. })));
+        assert_eq!(parse(no_endian.as_bytes()).unwrap_err(), KevError::NotLittleEndian);
         let be = OK.replace("TRACE_LITTLE_ENDIAN::TRUE", "TRACE_BIG_ENDIAN::TRUE");
-        assert!(!parse(be.as_bytes()).unwrap().0.little_endian);
+        assert_eq!(parse(be.as_bytes()).unwrap_err(), KevError::NotLittleEndian);
         let v7 = OK.replace("8.0.0", "7.1.0");
         assert!(matches!(parse(v7.as_bytes()), Err(KevError::UnsupportedVersion { .. })));
         let no_rel = OK.replace("TRACE_SYS_RELEASE::8.0.0", "");

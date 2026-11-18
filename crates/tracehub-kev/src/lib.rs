@@ -26,7 +26,7 @@ pub fn parse(bytes: &[u8]) -> Result<KevFile, KevError> {
     let (header, end) = kev_header::parse(bytes)?;
     let start = kev_syspage::skip(bytes, end, header.syspage_len)?;
     let (events, diag) = match header.version {
-        QnxVersion::V800 => qnx800::event_parser::parse(&header, &bytes[start..]),
+        QnxVersion::V800 => qnx800::event_parser::parse(&bytes[start..]),
     };
     Ok(KevFile { header, events, diag })
 }

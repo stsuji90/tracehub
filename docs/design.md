@@ -151,7 +151,6 @@ pub struct KevHeader {
     pub cycles_per_sec: u64,              // 無い・数値でなければ 0
     pub cpu_num: u32,                     // 同上
     pub syspage_len: u64,                 // 無い・空なら 0
-    pub little_endian: bool,              // スロットのバイト順
     pub keywords: Vec<(String, String)>,  // キー(TRACE_ と :: を除いた名前。例: VER_MAJOR)と値。kev に書かれた順
 }
 ```
@@ -159,8 +158,8 @@ pub struct KevHeader {
 - keywords は kev に書かれた順で持つ。traceprinter 互換出力のヘッダの行は、この順に書く。
 - 同じキーが 2 回以上あれば、すべて持つ。`get()` は最後のものを返す。
 - 値は、traceprinter の表示と同じく、NUL の手前までの印字可能な ASCII(0x20〜0x7E)だけを残す(実測: traceprinter はそれ以外のバイトを表示しない)。取り除いたバイトがあれば警告(log)を出す。
-- バイト順: `TRACE_LITTLE_ENDIAN` があればリトル、無く `TRACE_BIG_ENDIAN` があればビッグ、どちらも無ければエラー(§10)。
-- ビッグエンディアン: traceprinter は読むが、同じ時刻の TIME と BUFFER の並びが tracehub と違う(TIME のスロット自身の時刻に、更新前の上位 32 ビットを使っているように見える。未確認)。ビッグエンディアンの kev は traceprinter 互換出力の対象外とする。
+- バイト順: リトルエンディアン(`TRACE_LITTLE_ENDIAN` がある kev)だけを読む。それ以外はエラー(§10)。
+  - ビッグエンディアンの kev は traceprinter も読むが、同じ時刻の TIME と BUFFER の並びがリトルエンディアンのときと違う(TIME のスロット自身の時刻に、更新前の上位 32 ビットを使っているように見える。未確認)。QNX 8.0 の対象(x86_64・aarch64)はリトルエンディアンなので、扱わない。
 - fast / wide の区別は持たない。traceprinter は `TRACE_TRACELOGGER_ARGS` を見ず、イベントの構造で書式を選ぶ(§7.1)。
 
 ### 5.3 TraceEvent
@@ -260,7 +259,7 @@ struct Slot {
 }
 ```
 
-- syspage の後ろから 16 バイトずつ読む。バイト順はヘッダに従う。
+- syspage の後ろから 16 バイトずつ、リトルエンディアンで読む。
 - 16 バイトに満たない末尾は読まず、TrailingBytes を記録する。
 
 ### 6.3 reconstruct_timestamp
@@ -434,7 +433,7 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 |---|---|---|
 | `TRACE_HEADER_END::` が無い | エラー | 内部エラー 17 |
 | `TRACE_VER_MAJOR` / `TRACE_VER_MINOR` が無い(値は問わない) | エラー | 内部エラー 13 |
-| `TRACE_LITTLE_ENDIAN` も `TRACE_BIG_ENDIAN` も無い | エラー | 内部エラー 11 |
+| `TRACE_LITTLE_ENDIAN` が無い(`TRACE_BIG_ENDIAN` だけ、またはどちらも無い) | エラー | `TRACE_BIG_ENDIAN` だけなら読む。どちらも無ければ内部エラー 11 |
 | ヘッダの値に NUL・印字可能な ASCII 以外のバイトがある | 取り除いて読み、警告(log)を出す | NUL の手前まで、印字可能な ASCII だけを表示する |
 | ヘッダの項目(キー::値)が 2048 バイト以上 | エラー | 内部エラー 17 |
 | `TRACE_SYSPAGE_LEN` の分のバイトが無い | エラー | 内部エラー 12 |
