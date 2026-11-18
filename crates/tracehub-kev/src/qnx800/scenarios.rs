@@ -643,7 +643,7 @@ mod tests {
     use crate::model::{DecodeOptions, DiagKind, MissingStyle};
 
     /// CSV(この生成器の形)を kev のバイト列にする
-    fn kev_bytes(csv: &str) -> Vec<u8> {
+    pub(super) fn kev_bytes(csv: &str) -> Vec<u8> {
         let mut out = Vec::new();
         let mut sec = "";
         for line in csv.lines() {
@@ -709,5 +709,67 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod coverage {
+    use super::*;
+    use crate::ids::{ClassId, EventId};
+    use crate::model::{CombineStatus, DisplayStatus};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// def.rs の表から、セマンティック ID の全組み合わせ(USER・QUIP の任意番号を除く)
+    fn all_ids() -> BTreeSet<(ClassId, EventId)> {
+        let mut s = BTreeSet::new();
+        let mut add = |c: ClassId, t: &[(u16, &str, EventId)]| s.extend(t.iter().map(|r| (c, r.2)));
+        add(ClassId::CONTROL, def::CONTROL_EVENTS);
+        for c in [ClassId::KER_CALL_ENTER, ClassId::KER_CALL_EXIT, ClassId::KER_CALL_INT] {
+            add(c, def::KERCALLS);
+            add(c, def::KERCALLS_64);
+        }
+        add(ClassId::INT, def::INT_EVENTS);
+        add(ClassId::THREAD, def::THREAD_STATES);
+        add(ClassId::THREAD, def::PR_TH_VTHREAD);
+        add(ClassId::PROCESS, def::PR_TH_PROCESS);
+        add(ClassId::SYSTEM, def::SYSTEM_EVENTS);
+        add(ClassId::SYSTEM, def::SYSTEM_EVENTS_64);
+        add(ClassId::COMM, def::COMM_EVENTS);
+        add(ClassId::SEC, def::SEC_EVENTS);
+        add(ClassId::QVM, def::QVM_EVENTS);
+        s
+    }
+
+    /// 全イベント網羅の合成 kev(catalog)に、セマンティック ID の全組み合わせがある
+    #[test]
+    fn catalog_covers_all_semantic_ids() {
+        let csv = scenarios().into_iter().find(|s| s.0 == "catalog").unwrap().1;
+        let kev = crate::parse(&super::tests::kev_bytes(&csv)).unwrap();
+        let all = all_ids();
+        let mut seen: BTreeMap<(ClassId, EventId), bool> = BTreeMap::new(); // 組み合わせ → 表示されたか
+        for ev in &kev.events {
+            if ev.combine_status == CombineStatus::Complete {
+                let d = seen.entry((ev.class_id, ev.event_id)).or_default();
+                *d |= ev.display_status == DisplayStatus::Display;
+            }
+        }
+        let missing: Vec<_> = all.iter().filter(|k| !seen.contains_key(k)).collect();
+        assert!(missing.is_empty(), "catalog に無い組み合わせ: {missing:?}");
+        let displayed = all.iter().filter(|k| seen[k]).count();
+        let mut per_class: BTreeMap<u16, (usize, usize)> = BTreeMap::new();
+        for k in &all {
+            let e = per_class.entry(k.0.0).or_default();
+            e.0 += 1;
+            e.1 += seen[k] as usize;
+        }
+        println!(
+            "セマンティック ID の組み合わせ {} 種類(表示されるもの {})",
+            all.len(),
+            displayed
+        );
+        for (c, (n, d)) in per_class {
+            println!("  クラス {c}: {n} 種類(表示 {d})");
+        }
+        println!("catalog のイベント {} 件", kev.events.len());
     }
 }
