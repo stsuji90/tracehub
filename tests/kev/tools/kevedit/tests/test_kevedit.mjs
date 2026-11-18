@@ -139,6 +139,9 @@ else {
   ok(same(K.buildKev(doc).subarray(0, text.length), Uint8Array.from(text, (c) => c.charCodeAt(0))), "ヘッダがつないだ文字列と違う");
   doc.header[1].key = doc.header[1].key.replace(/::$/, ":"); // 区切りを崩すと、その項目はキーとして読まれない
   ok(K.check(doc).some(([, m]) => /VER_MAJOR/.test(m)), "区切りを崩した VER_MAJOR に気づかない");
+  const le = (keep) => ({ ...K.newDoc(), header: K.newDoc().header.map((x) => (x.key.startsWith(defs.header.little_endian) ? { ...x, on: keep } : x)) });
+  ok(K.check(le(false)).some(([, m]) => m.includes(defs.header.big_endian)), "エンディアンのキーが無いのに注意が出ない");
+  ok(K.check(K.parseKev(samples["be.kev"])).some(([, m]) => m.includes("ビッグエンディアン")), "ビッグエンディアンの注意が出ない");
   const d2 = K.parseKev(samples["junk.kev"]);
   ok(d2.header[0].key === "" && d2.header[0].value === "xyz", "キーより前のバイトの行");
 }

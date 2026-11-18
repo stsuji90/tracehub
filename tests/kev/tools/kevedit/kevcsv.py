@@ -445,6 +445,11 @@ def check(doc: dict) -> list[tuple[str, str]]:
     for k in (H["ver_major"], H["ver_minor"]):
         if header_value(doc["header"], k) is None:
             out.append(("warn", f"{k} がありません(traceprinter が読みません)"))
+    if header_value(doc["header"], H["little_endian"]) is None:
+        if header_value(doc["header"], H["big_endian"]) is None:
+            out.append(("warn", f"{H['little_endian']} も {H['big_endian']} もありません(traceprinter が読みません。この道具はリトルエンディアンとして書きます)"))
+        else:
+            out.append(("warn", f"{H['little_endian']} がありません(ビッグエンディアンの kev になります。tracehub はリトルエンディアンだけを読みます)"))
     sp = syspage_len(doc["header"])
     actual = sum(len(x["bytes"]) for x in doc["syspage"] if x["on"])
     if sp is None:

@@ -464,6 +464,13 @@ function makeCore(D) {
     for (const k of [H.ver_major, H.ver_minor]) {
       if (headerValue(doc.header, k) === null) out.push(["warn", `${k} がありません(traceprinter が読みません)`]);
     }
+    if (headerValue(doc.header, H.little_endian) === null) {
+      if (headerValue(doc.header, H.big_endian) === null) {
+        out.push(["warn", `${H.little_endian} も ${H.big_endian} もありません(traceprinter が読みません。この道具はリトルエンディアンとして書きます)`]);
+      } else {
+        out.push(["warn", `${H.little_endian} がありません(ビッグエンディアンの kev になります。tracehub はリトルエンディアンだけを読みます)`]);
+      }
+    }
     const sp = syspageLen(doc.header);
     const actual = doc.syspage.filter((x) => x.on).reduce((a, x) => a + x.bytes.length, 0);
     if (Number.isNaN(sp)) out.push(["warn", `${H.syspage_len} が数値ではありません`]);
