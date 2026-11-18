@@ -155,31 +155,29 @@ pub struct TraceEvent {
     pub event_id: EventId,
     pub int_class_id: u8,            // header の内部クラス
     pub int_event_id: u16,           // header の内部イベント番号
-    pub flags: u8,                   // header のフラグ(ビット 16〜23)
     pub combine_status: CombineStatus,
     pub display_status: DisplayStatus,
-    pub payloads: Vec<u32>,          // 組では各スロットの payloads をつないだもの
+    pub payloads: Vec<u32>,          // 下の表
 }
 
-pub enum CombineStatus { Single, Complete, Truncated, Orphan }
+pub enum CombineStatus { Complete, Truncated, Orphan }
 pub enum DisplayStatus { Display, Silent }
 ```
 
 | combine_status | 意味 | payloads |
 |---|---|---|
-| `Single` | S のスロット 1 つのイベント | 2 語 |
-| `Complete` | CB から CE までそろった組 | 2 × スロット数 |
-| `Truncated` | CE が来ないまま途切れた組(§6.5) | それまでに集まった分 |
-| `Orphan` | 組み立て中の組が無いのに来た CC / CE のスロット 1 つ | 2 語 |
+| `Complete` | S のスロット 1 つのイベント、または CB から CE までそろった組 | 各スロットの payloads(word[2]・word[3])をつないだもの。S なら 2 語 |
+| `Truncated` | CE が来ないまま途切れた組(§6.5) | 集まった各スロットの**生の 4 words**(header を含む)をつないだもの |
+| `Orphan` | 組み立て中の組が無いのに来た CC / CE のスロット 1 つ | そのスロットの**生の 4 words**(header を含む) |
 
 | display_status | 意味 |
 |---|---|
 | `Display` | traceprinter が何かを出力するもの(イベントの行、ORPHAN 行、UNKNOW 行) |
 | `Silent` | traceprinter が何も出力しないもの(header が 0 のスロット、表示しないと決まっているイベントなど。一覧は版の定義が持つ) |
 
-- `flags` は第 1 段階の要件に無かったが、traceprinter の診断行が header をそのまま表示するため加えた。
-- 時刻は組では CB(Orphan では そのスロット)の時刻。
-- 組の 2 つ目以降のスロットの構造は、Orphan のときだけ必要になるので、DiagInfo が持つ。
+- Truncated と Orphan で生の words を持つのは、traceprinter の診断行(TRUNC・ORPHAN)がスロットの 4 words をそのまま表示するため。header のフラグ・構造(CC / CE)もここから分かる。
+- Truncated を decode するときは、各スロットの word[2]・word[3] を取り出して payloads として扱う。
+- 時刻は組では CB(Orphan ではそのスロット)の時刻。
 
 ### 5.4 DiagInfo
 
@@ -193,7 +191,7 @@ pub struct DiagInfo {
 
 | DiagKind | 確定するとき | 持つ情報 |
 |---|---|---|
-| `Orphan` | CC / CE に組み立て中の組が無かった | TraceEvent の番号、スロットの構造(CC / CE)、traceprinter が表示する番号、表示する位置(§9.3) |
+| `Orphan` | CC / CE に組み立て中の組が無かった | TraceEvent の番号、traceprinter が表示する番号、表示する位置(§9.3) |
 | `Truncated` | 組が途切れた | TraceEvent の番号、途切れた理由(同じ鍵の CB / 窓 / 列の終わり)、traceprinter が表示する番号 |
 | `SeqGap` | BUFFER の通番が、同じ CPU の前の BUFFER の通番 + 1 でなかった | 前の通番、今の通番 |
 | `CountMismatch` | BUFFER_END で、BUFFER に書かれたスロット数と実際の数が違った | 通番、BUFFER の数、実際の数 |
@@ -207,7 +205,7 @@ pub struct DiagInfo {
 
 - 時刻(`timestamp_cycles`)は、確定したスロットの時刻。TrailingBytes は 0 とする。
 - 時刻の範囲は持たない。欠けた範囲は、前後の値(SeqGap の前の通番と今の通番など)で分かる。
-- payloads は持たない。必要なら TraceEvent の番号から引く。
+- payloads や words は持たない。必要なら TraceEvent の番号から引く。
 
 ---
 
@@ -455,10 +453,10 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 
 | 種類 | 内容 |
 |---|---|
-| 合成 kev | tools/kevedit/kevcsv.py で CSV から作る。版の定義にある全イベント(S・組・途切れ・orphan・未定義)を網羅する。traceprinter の出力とバイト単位で比べる |
-| 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取る。traceprinter の出力とバイト単位で比べる。リポジトリには入れず、置き場所は環境変数で指定する |
 | 単体試験 | ヘッダ・merge・combine・CONTROL の点検・decode を、小さな入力で確かめる |
+| 合成 kev | tools/kevedit/kevcsv.py で CSV から作る。版の定義にある全イベント(S・組・途切れ・orphan・未定義)を網羅する。traceprinter の出力とバイト単位で比べる |
+| 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取る。traceprinter の出力とバイト単位で比べる。仕上げとして最後に行う |
 
 - 実機で取りにくいイベントは、合成 kev で確かめる。
 - traceprinter と比べる試験は、手元に traceprinter があるときだけ行う(場所は環境変数で指定)。
-- traceprinter の出力は、試験の期待値としてリポジトリに入れる(合成 kev の分だけ)。
+- traceprinter の出力と実機の kev は、リポジトリに入れない(実機の kev の置き場所も環境変数で指定)。
