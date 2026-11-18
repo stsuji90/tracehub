@@ -1,0 +1,12 @@
+[package]
+name = "tracehub-cli"
+description = "tracehub コマンド"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "tracehub"
+path = "src/main.rs"
+
+[dependencies]
+tracehub-kev = { path = "../tracehub-kev" }

@@ -1,0 +1,7 @@
+[package]
+name = "tracehub-kev"
+description = "QNX のカーネルトレース(kev)の読み取りと traceprinter 互換出力"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

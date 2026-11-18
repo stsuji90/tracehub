@@ -1,0 +1,5 @@
+/target
+# QNX の配布物・実機の kev・traceprinter の出力はリポジトリに入れない
+/inputs/
+*.kev
+/work/
