@@ -680,6 +680,29 @@ mod tests {
                     "{name}: {d:?}"
                 );
             }
+            // traceprinter が行を出す 64 ビット版には、セマンティック ID がある(def.rs の 64 ビット版の表に漏れが無い)
+            for ev in &kev.events {
+                let is64 = matches!(ev.int_class_id, def::CLASS_KER_CALL | def::CLASS_SYSTEM)
+                    && ev.int_event_id & def::BIT64 != 0;
+                if is64
+                    && ev.combine_status == crate::model::CombineStatus::Complete
+                    && crate::qnx800::event_decoder::format(
+                        ev.int_class_id,
+                        ev.int_event_id,
+                        &ev.payloads,
+                        crate::tp_format::Missing::Omit,
+                    )
+                    .is_some()
+                {
+                    assert_ne!(
+                        ev.event_id,
+                        crate::ids::EventId::UNKNOWN,
+                        "{name}: {} {:#x}",
+                        ev.int_class_id,
+                        ev.int_event_id
+                    );
+                }
+            }
             for missing in [MissingStyle::Traceprinter, MissingStyle::Marked] {
                 for ev in &kev.events {
                     let _ = crate::decode(kev.header.version, ev, &DecodeOptions { missing });

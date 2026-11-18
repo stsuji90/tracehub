@@ -10,7 +10,7 @@ def.rs に書くもの:
   - header のビット配置(フラグを含む)、構造の値
   - 内部クラス ID、CONTROL のイベント番号と payloads の位置、cookie
   - KER_CALL のイベント番号の作り(コール番号のマスク、exit / int / 64 ビットのビット)
-  - クラスごとの (内部イベント番号, 名前, セマンティック ID) の表
+  - クラスごとの (内部イベント番号, 名前, セマンティック ID) の表(KER_CALL・SYSTEM は 64 ビット版の表も)
 セマンティック ID は crates/tracehub-kev/src/ids.rs の定数を名前で参照する。
 ids.rs に無い名前があると def.rs がビルドできないので、ids.rs に追加する(番号は追加だけ)。
 """
@@ -176,6 +176,15 @@ def main() -> int:
     proc_names = ["CREATE_P", "DESTROY_P", "CREATE_P_NAME", "DESTROY_P_NAME", "NAME_T"]
     vt_names = ["CREATE_VT", "DESTROY_VT"]
     system = H.prefixed("_NTO_TRACE_SYS_", literal_only=True)
+    # 64 ビット版がある SYSTEM のイベント(TableOfEvents の `|_NTO_TRACE_KERCALL64` と、ヘッダの *_64 = X|_NTO_TRACE_KERCALL64)
+    bit64 = H.value("_NTO_TRACE_KERCALL64")
+    # KER_CALL は全コールに 64 ビット版を置く(TableOfEvents に記載の無い 64 ビット版もカーネルは記録し、traceprinter は表示する)
+    sys_nums = dict(system)
+    sys64_names = set(re.findall(r"^Event:\s*_NTO_TRACE_SYS_(\w+)\|_NTO_TRACE_KERCALL64\s*$", table, re.M))
+    for n, v in H.prefixed("_NTO_TRACE_SYS_"):
+        if n.endswith("_64") and n[:-3] in sys_nums and v == sys_nums[n[:-3]] | bit64:
+            sys64_names.add(n[:-3])
+    system64 = [(n, v | bit64) for n, v in system if n in sys64_names]
     comm = H.prefixed("_NTO_TRACE_COMM_", literal_only=True)
     sec = [(n, v) for n, v in H.prefixed("_NTO_TRACE_SEC_", exclude=[r".*FIRST", r".*LAST"])
            if not n.startswith("ABLE_") or n == "ABLE_LOOKUP"]
@@ -241,6 +250,9 @@ def main() -> int:
         "",
         rows("KERCALLS", [(v, n, f"ids::kercall::{n}") for n, v in kercalls], "カーネルコール(__KER_*): (コール番号, 名前, セマンティック ID)"),
         "",
+        rows("KERCALLS_64", [(v, n, f"ids::kercall::{n}_64") for n, v in kercalls],
+             "カーネルコールの 64 ビット版(全コール): (コール番号, 名前, セマンティック ID)"),
+        "",
         rows("THREAD_STATES", [(v, n, f"ids::thread::{n}") for n, v in states], "スレッドの状態(STATE_*)。PR_TH のイベント番号"),
         "",
         rows("PR_TH_VTHREAD", [(pr_th[n], n, f"ids::thread::{n}") for n in vt_names], "仮想スレッドの生成・破棄(_TRACE_PR_TH_*_VT)"),
@@ -251,7 +263,10 @@ def main() -> int:
         "",
         rows("INT_EVENTS", [(v, n, f"ids::int::{n}") for n, v in ints], "INT のイベント(_TRACE_INT_*)"),
         "",
-        rows("SYSTEM_EVENTS", [(v, n, f"ids::system::{n}") for n, v in system], "SYSTEM のイベント(_NTO_TRACE_SYS_*)。64 ビット版は BIT64 を足した番号"),
+        rows("SYSTEM_EVENTS", [(v, n, f"ids::system::{n}") for n, v in system], "SYSTEM のイベント(_NTO_TRACE_SYS_*)"),
+        "",
+        rows("SYSTEM_EVENTS_64", [(v, n, f"ids::system::{n}_64") for n, v in system64],
+             "SYSTEM の 64 ビット版(_NTO_TRACE_SYS_*_64、TableOfEvents の |_NTO_TRACE_KERCALL64): (BIT64 を足した番号, 名前, セマンティック ID)"),
         "",
         rows("COMM_EVENTS", [(v, n, f"ids::comm::{n}") for n, v in comm], "COMM のイベント(_NTO_TRACE_COMM_*)"),
         "",

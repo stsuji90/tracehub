@@ -116,6 +116,14 @@ fn event_table(class: u8) -> &'static [(u16, &'static str, EventId)] {
     }
 }
 
+/// 内部クラス ID → 64 ビット版の (BIT64 を足した内部イベント番号, 名前, セマンティック ID) の表(KER_CALL 以外)
+fn event_table_64(class: u8) -> &'static [(u16, &'static str, EventId)] {
+    match class {
+        def::CLASS_SYSTEM => def::SYSTEM_EVENTS_64,
+        _ => &[],
+    }
+}
+
 /// 内部クラス名と内部イベント名から内部イベント番号を引く(KER_CALL は種別と 64 ビット版も)
 pub(crate) fn event_code(class: u8, name: &str, kind: &str, is64: bool) -> Option<u16> {
     let bit64 = if is64 { def::BIT64 } else { 0 };
@@ -155,11 +163,15 @@ pub(crate) fn semantic_ids(class: u8, code: u16) -> (ClassId, EventId) {
                 def::KERCALL_INT => ClassId::KER_CALL_INT,
                 _ => return unknown,
             };
-            match find(def::KERCALLS, code & def::KERCALL_NUM_MASK) {
-                Some(e) if code & def::BIT64 != 0 => (cls, e.bit64()),
-                Some(e) => (cls, e),
-                None => (cls, EventId::UNKNOWN),
-            }
+            let table = if code & def::BIT64 != 0 {
+                def::KERCALLS_64
+            } else {
+                def::KERCALLS
+            };
+            (
+                cls,
+                find(table, code & def::KERCALL_NUM_MASK).unwrap_or(EventId::UNKNOWN),
+            )
         }
         def::CLASS_PR_TH => {
             if let Some(e) = find(def::PR_TH_PROCESS, code) {
@@ -181,26 +193,18 @@ pub(crate) fn semantic_ids(class: u8, code: u16) -> (ClassId, EventId) {
                 def::CLASS_QVM => ClassId::QVM,
                 _ => return unknown,
             };
-            let t = event_table(class);
-            match find(t, code) {
-                Some(e) => (cls, e),
-                None if class == def::CLASS_SYSTEM && code & def::BIT64 != 0 => {
-                    (cls, find(t, code & !def::BIT64).map_or(EventId::UNKNOWN, |e| e.bit64()))
-                }
-                None => (cls, EventId::UNKNOWN),
-            }
+            let e = find(event_table(class), code).or_else(|| find(event_table_64(class), code));
+            (cls, e.unwrap_or(EventId::UNKNOWN))
         }
     }
 }
 
 /// セマンティック ID → 内部 ID(semantic_ids の逆)
 pub(crate) fn internal_ids(class: ClassId, event: EventId) -> Option<(u8, u16)> {
-    if event.is_unknown() {
+    if event == EventId::UNKNOWN {
         return None;
     }
-    let base = EventId(event.0 & !EventId::BIT64);
-    let bit64 = if event.is_64bit() { def::BIT64 } else { 0 };
-    let find = |t: &[(u16, &str, EventId)]| t.iter().find(|r| r.2 == base).map(|r| r.0);
+    let find = |t: &[(u16, &str, EventId)]| t.iter().find(|r| r.2 == event).map(|r| r.0);
     match class {
         ClassId::KER_CALL_ENTER | ClassId::KER_CALL_EXIT | ClassId::KER_CALL_INT => {
             let kind = match class {
@@ -208,7 +212,8 @@ pub(crate) fn internal_ids(class: ClassId, event: EventId) -> Option<(u8, u16)> 
                 ClassId::KER_CALL_INT => def::KERCALL_INT,
                 _ => 0,
             };
-            Some((def::CLASS_KER_CALL, find(def::KERCALLS)? | kind | bit64))
+            let num = find(def::KERCALLS).or_else(|| find(def::KERCALLS_64).map(|n| n | def::BIT64))?;
+            Some((def::CLASS_KER_CALL, num | kind))
         }
         ClassId::THREAD => Some((
             def::CLASS_PR_TH,
@@ -227,7 +232,7 @@ pub(crate) fn internal_ids(class: ClassId, event: EventId) -> Option<(u8, u16)> 
                 ClassId::QVM => def::CLASS_QVM,
                 _ => return None,
             };
-            Some((class, find(event_table(class))? | bit64))
+            Some((class, find(event_table(class)).or_else(|| find(event_table_64(class)))?))
         }
     }
 }
@@ -250,17 +255,12 @@ mod tests {
                 def::CLASS_KER_CALL,
                 11 | def::KERCALL_EXIT | def::BIT64,
                 ClassId::KER_CALL_EXIT,
-                ids::kercall::MSG_SENDV.bit64(),
+                ids::kercall::MSG_SENDV_64,
             ),
             (def::CLASS_PR_TH, 1, ClassId::THREAD, ids::thread::RUNNING),
             (def::CLASS_PR_TH, 192, ClassId::PROCESS, ids::process::CREATE_P_NAME),
             (def::CLASS_SYSTEM, 12, ClassId::SYSTEM, ids::system::SLOG),
-            (
-                def::CLASS_SYSTEM,
-                16 | def::BIT64,
-                ClassId::SYSTEM,
-                ids::system::IPI.bit64(),
-            ),
+            (def::CLASS_SYSTEM, 16 | def::BIT64, ClassId::SYSTEM, ids::system::IPI_64),
             (def::CLASS_USER, 77, ClassId::USER, EventId(77)),
         ];
         for (c, e, sc, se) in cases {
@@ -268,6 +268,20 @@ mod tests {
             assert_eq!(internal_ids(sc, se), Some((c, e)));
         }
         assert_eq!(semantic_ids(0, 0), (ClassId::UNKNOWN, EventId::UNKNOWN));
+        // KER_CALL は全コールに 64 ビット版がある。定義の無いコール番号は UNKNOWN
+        assert_eq!(
+            semantic_ids(def::CLASS_KER_CALL, def::BIT64),
+            (ClassId::KER_CALL_ENTER, ids::kercall::NOP_64)
+        );
+        assert_eq!(
+            semantic_ids(def::CLASS_KER_CALL, 120 | def::BIT64),
+            (ClassId::KER_CALL_ENTER, EventId::UNKNOWN)
+        );
+        // SYSTEM の 64 ビット版の一覧に無いもの(SLOG の 64 ビット版)は UNKNOWN
+        assert_eq!(
+            semantic_ids(def::CLASS_SYSTEM, 12 | def::BIT64),
+            (ClassId::SYSTEM, EventId::UNKNOWN)
+        );
         assert_eq!(semantic_ids(def::CLASS_SYSTEM, 1000).1, EventId::UNKNOWN);
         assert_eq!(
             semantic_ids(def::CLASS_KER_CALL, def::KERCALL_EXIT | def::KERCALL_INT).0,

@@ -346,7 +346,7 @@ args.rs はイベントごとに、書式の要素(`h`・`d`・`u`・`q`・`e`�
 ```rust
 pub struct ClassId(pub u16);
 pub struct EventId(pub u16);
-// UNKNOWN = 0xFFFF、EventId::BIT64 = 0x8000(64 ビット版)
+// ClassId::UNKNOWN / EventId::UNKNOWN = 0xFFFF(解釈できなかったもの)
 ```
 
 - ids.rs に定数として定義する。版に依存しない。
@@ -375,7 +375,10 @@ pub struct EventId(pub u16);
 
 - クラスごとのモジュール(`ids::kercall`・`ids::thread`・`ids::system` など)に、意味(QNX の名前)ごとの番号を定数で置く。カーネルコールの番号などとは別の番号。
 - KER_CALL の enter / exit / int はクラスで区別し、イベント ID は共通(`ids::kercall`)。
-- 64 ビット版(KER_CALL・SYSTEM)は `EventId::BIT64` を立てた番号(`ids::kercall::MSG_SENDV.bit64()`)。
+- 64 ビット版(KER_CALL・SYSTEM)は別のイベント ID(`ids::kercall::MSG_SENDV_64` など)。番号に意味を持たせない。
+  - KER_CALL は全コールに 64 ビット版の ID を置く。TableOfEvents に記載の無い 64 ビット版もカーネルは記録し、traceprinter は表示するため(実測: `MSG_SEND_PULSE` など)。
+  - SYSTEM はヘッダの `_NTO_TRACE_SYS_*_64` と TableOfEvents の `|_NTO_TRACE_KERCALL64` にあるものだけ。それ以外の 64 ビット版は UNKNOWN。
+  - def.rs の `KERCALLS_64`・`SYSTEM_EVENTS_64` が、内部イベント番号との対応を持つ。
 - 番号が任意のイベント(USER・QUIP)は、内部イベント番号をそのまま event_id にする。
 - 対応表に無いものは UNKNOWN(`0xFFFF`)。
 
