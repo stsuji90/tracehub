@@ -1,0 +1,966 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kevedit</title>
+<!-- kev(QNX のカーネルトレース)を 1 スロットずつ編集する。定義は下の <script id="defs"> に埋め込んである(kevcsv.py の DEFS と同じ内容) -->
+<style>
+  :root {
+    --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #d9d9de; --head: #eef0f3;
+    --accent: #2f6fdf; --bad: #c62828; --badbg: #fdecea; --warn: #8a5a00; --warnbg: #fff6dc;
+    --off: #9a9aa0; --input: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1c1f; --fg: #e6e6e9; --muted: #9a9aa3; --line: #3a3b40; --head: #26282c;
+      --accent: #6c9dff; --bad: #ff6b6b; --badbg: #3a1f1f; --warn: #ffcc66; --warnbg: #352c17;
+      --off: #6b6b72; --input: #232428;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.45 system-ui, "Segoe UI", "Yu Gothic UI", sans-serif; }
+  header.bar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 8px 16px; background: var(--head); border-bottom: 1px solid var(--line); }
+  header.bar h1 { font-size: 15px; margin: 0 12px 0 0; }
+  main { padding: 8px 16px 40px; }
+  h2 { font-size: 14px; margin: 18px 0 6px; }
+  button { font: inherit; padding: 3px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--input); color: var(--fg); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  input, select { font: inherit; color: var(--fg); background: var(--input); border: 1px solid var(--line); border-radius: 3px; padding: 1px 4px; }
+  input.bad { border-color: var(--bad); background: var(--badbg); }
+  .mono, input.mono { font-family: ui-monospace, Consolas, "Cascadia Mono", monospace; }
+  .muted { color: var(--muted); }
+  .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+  #msgs { margin: 8px 0; }
+  #msgs div { padding: 3px 8px; margin: 2px 0; border-radius: 3px; }
+  #msgs .err { color: var(--bad); background: var(--badbg); }
+  #msgs .warn { color: var(--warn); background: var(--warnbg); }
+  #msgs .info { color: var(--muted); }
+  table { border-collapse: collapse; }
+  th, td { border-bottom: 1px solid var(--line); padding: 2px 4px; white-space: nowrap; vertical-align: middle; }
+  th { background: var(--head); font-weight: 600; text-align: left; position: sticky; top: 0; z-index: 2; }
+  tr.off td { color: var(--off); }
+  tr.off input, tr.off select { opacity: .55; }
+  td.n { text-align: right; color: var(--muted); }
+  .w3 { width: 3.2em; } .w4 { width: 4.6em; } .w10 { width: 7.6em; } .w12 { width: 9em; } .w20 { width: 16em; } .w40 { width: 32em; }
+  select.cls { width: 7.5em; } select.ev { width: 13em; }
+  .stack { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+  td.ops button { padding: 0 6px; margin-left: 2px; }
+  .pager { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+  .wrap { overflow: auto; max-height: 72vh; border: 1px solid var(--line); }
+  .drop { outline: 3px dashed var(--accent); outline-offset: -6px; }
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 8px; }
+  #bufInfo table { margin-top: 4px; }
+  #bufInfo .wrap { max-height: 30vh; }
+  #bufInfo tr.jump { cursor: pointer; }
+  #bufInfo tr.jump:hover td { background: var(--head); }
+  #bufInfo td.bad { color: var(--warn); }
+  tr.hit td { animation: hit 1.6s ease-out; }
+  @keyframes hit { from { background: var(--warnbg); } to { background: transparent; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>kevedit</h1>
+  <button id="bOpen" title="kev または CSV(拡張子 .csv)を開く。ページにファイルを落としても開けます">開く</button>
+  <button id="bNew">新規</button>
+  <span class="sep"></span>
+  <label>名前 <input id="fname" class="w20" value="edited"></label>
+  <button id="bSaveKev">kev を保存</button>
+  <button id="bSaveCsv">CSV を保存</button>
+  <span class="sep"></span>
+  <span id="summary" class="muted"></span>
+  <input id="file" type="file" accept=".kev,.csv,*/*" hidden>
+</header>
+<main>
+  <div id="msgs"></div>
+
+  <h2>ヘッダ</h2>
+  <div class="wrap"><table id="hdr">
+    <thead><tr><th>#</th><th>有効</th><th>キー(区切りの <span class="mono">::</span> を含む)</th><th>値</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p><button id="bHdrAdd">項目を追加</button> <span id="hdrInfo" class="muted"></span></p>
+
+  <h2>syspage</h2>
+  <p id="sys"></p>
+
+  <h2>トレースバッファ</h2>
+  <div class="tools">
+    <button id="bAddBuf" title="スロットの末尾(新規の空行より前)に TIME・BUFFER・BUFFER_END の 3 行を足す。CPU と時刻は直前の有効なスロットから">トレースバッファ追加</button>
+    <button id="bFix" title="BUFFER_END で閉じたトレースバッファの、BUFFER のスロット数を実際の数(TIME から BUFFER_END まで)にする">バッファ内スロット数修正</button>
+  </div>
+  <div id="bufInfo"></div>
+
+  <h2>スロット</h2>
+  <div class="pager" id="pagerTop"></div>
+  <div class="wrap"><table id="slots">
+    <thead><tr>
+      <th>#</th><th>有効</th>
+      <th>header</th><th>stamp</th><th>payload[0]</th><th>payload[1]</th>
+      <th>構造</th><th>CPU</th><th>フラグ</th>
+      <th>クラス<br><span class="muted">名前 / 値</span></th><th>イベント<br><span class="muted">名前 / 値</span></th>
+      <th>payload[0]<br><span class="muted">文字列 / 値(10 進)</span></th><th>payload[1]<br><span class="muted">文字列 / 値(10 進)</span></th><th></th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <div class="pager" id="pagerBottom"></div>
+  <p><button id="bAddRows"></button></p>
+</main>
+
+<!-- 定義(QNX 8.0 の sys/trace.h などから取った値)。kevcsv.py の DEFS と同じ内容にしておく -->
+<script id="defs" type="application/json">
+{
+ "release": "8.0",
+ "slot_bytes": 16,
+ "layout": {"event": {"shift": 0, "mask": 1023}, "class": {"shift": 10, "mask": 31}, "flags": {"shift": 16, "mask": 255}, "cpu": {"shift": 24, "mask": 63}, "struct": {"shift": 30, "mask": 3}},
+ "structs": [[0, "S"], [1, "CB"], [2, "CC"], [3, "CE"]],
+ "header": {"prefix": "TRACE_", "postfix": "::", "begin": "TRACE_HEADER_BEGIN", "end": "TRACE_HEADER_END", "little_endian": "TRACE_LITTLE_ENDIAN", "big_endian": "TRACE_BIG_ENDIAN", "syspage_len": "TRACE_SYSPAGE_LEN", "ver_major": "TRACE_VER_MAJOR", "ver_minor": "TRACE_VER_MINOR"},
+ "new_header": [["TRACE_HEADER_BEGIN", ""], ["TRACE_VER_MAJOR", "2"], ["TRACE_VER_MINOR", "01"], ["TRACE_LITTLE_ENDIAN", "TRUE"], ["TRACE_ENCODING", "16 byte events"], ["TRACE_CYCLES_PER_SEC", "19200000"], ["TRACE_CPU_NUM", "1"], ["TRACE_SYS_RELEASE", "8.0.0"], ["TRACE_SYSPAGE_LEN", "0"], ["TRACE_HEADER_END", ""]],
+ "control": {"class": 1, "time": 1, "buffer": 2, "buffer_end": 4, "words": {"time_msb": 0, "time_lsb": 1, "buffer_sequence": 0, "buffer_num_events": 1, "dropped_count": 0}},
+ "cookie": 3873892070,
+ "wrap_threshold": 2147483648,
+ "classes": [
+  {"value": 1, "name": "CONTROL", "bit64": 0, "events": [
+   [1, "TIME"], [2, "BUFFER"], [4, "BUFFER_END"], [8, "DROPPED"]
+  ]},
+  {"value": 2, "name": "KER_CALL", "bit64": 512, "events": [
+   [0, "NOP:enter"], [128, "NOP:exit"], [256, "NOP:int"], [1, "TRACE_EVENT:enter"], [129, "TRACE_EVENT:exit"], [257, "TRACE_EVENT:int"],
+   [2, "RING0:enter"], [130, "RING0:exit"], [258, "RING0:int"], [3, "CACHE_CONTROL:enter"], [131, "CACHE_CONTROL:exit"], [259, "CACHE_CONTROL:int"],
+   [4, "SYS_SRANDOM:enter"], [132, "SYS_SRANDOM:exit"], [260, "SYS_SRANDOM:int"], [5, "MSG_REGISTER_EVENT:enter"], [133, "MSG_REGISTER_EVENT:exit"], [261, "MSG_REGISTER_EVENT:int"],
+   [6, "MSG_SEND_PULSEPTR:enter"], [134, "MSG_SEND_PULSEPTR:exit"], [262, "MSG_SEND_PULSEPTR:int"], [7, "SYS_CPUPAGE_GET:enter"], [135, "SYS_CPUPAGE_GET:exit"], [263, "SYS_CPUPAGE_GET:int"],
+   [8, "SYS_CPUPAGE_SET:enter"], [136, "SYS_CPUPAGE_SET:exit"], [264, "SYS_CPUPAGE_SET:int"], [9, "MSG_PAUSE:enter"], [137, "MSG_PAUSE:exit"], [265, "MSG_PAUSE:int"],
+   [10, "MSG_CURRENT:enter"], [138, "MSG_CURRENT:exit"], [266, "MSG_CURRENT:int"], [11, "MSG_SENDV:enter"], [139, "MSG_SENDV:exit"], [267, "MSG_SENDV:int"],
+   [12, "MSG_SENDVNC:enter"], [140, "MSG_SENDVNC:exit"], [268, "MSG_SENDVNC:int"], [13, "MSG_ERROR:enter"], [141, "MSG_ERROR:exit"], [269, "MSG_ERROR:int"],
+   [14, "MSG_RECEIVEV:enter"], [142, "MSG_RECEIVEV:exit"], [270, "MSG_RECEIVEV:int"], [15, "MSG_REPLYV:enter"], [143, "MSG_REPLYV:exit"], [271, "MSG_REPLYV:int"],
+   [16, "MSG_READV:enter"], [144, "MSG_READV:exit"], [272, "MSG_READV:int"], [17, "MSG_WRITEV:enter"], [145, "MSG_WRITEV:exit"], [273, "MSG_WRITEV:int"],
+   [19, "MSG_INFO:enter"], [147, "MSG_INFO:exit"], [275, "MSG_INFO:int"], [20, "MSG_SEND_PULSE:enter"], [148, "MSG_SEND_PULSE:exit"], [276, "MSG_SEND_PULSE:int"],
+   [21, "MSG_DELIVER_EVENT:enter"], [149, "MSG_DELIVER_EVENT:exit"], [277, "MSG_DELIVER_EVENT:int"], [24, "MSG_RECEIVEPULSEV:enter"], [152, "MSG_RECEIVEPULSEV:exit"], [280, "MSG_RECEIVEPULSEV:int"],
+   [25, "MSG_VERIFY_EVENT:enter"], [153, "MSG_VERIFY_EVENT:exit"], [281, "MSG_VERIFY_EVENT:int"], [26, "SIGNAL_KILL:enter"], [154, "SIGNAL_KILL:exit"], [282, "SIGNAL_KILL:int"],
+   [27, "SIGNAL_RETURN:enter"], [155, "SIGNAL_RETURN:exit"], [283, "SIGNAL_RETURN:int"], [29, "SIGNAL_ACTION:enter"], [157, "SIGNAL_ACTION:exit"], [285, "SIGNAL_ACTION:int"],
+   [30, "SIGNAL_PROCMASK:enter"], [158, "SIGNAL_PROCMASK:exit"], [286, "SIGNAL_PROCMASK:int"], [31, "SIGNAL_SUSPEND:enter"], [159, "SIGNAL_SUSPEND:exit"], [287, "SIGNAL_SUSPEND:int"],
+   [32, "SIGNAL_WAITINFO:enter"], [160, "SIGNAL_WAITINFO:exit"], [288, "SIGNAL_WAITINFO:int"], [33, "SIGNAL_KILL_SIGVAL:enter"], [161, "SIGNAL_KILL_SIGVAL:exit"], [289, "SIGNAL_KILL_SIGVAL:int"],
+   [35, "CHANNEL_CREATE:enter"], [163, "CHANNEL_CREATE:exit"], [291, "CHANNEL_CREATE:int"], [36, "CHANNEL_DESTROY:enter"], [164, "CHANNEL_DESTROY:exit"], [292, "CHANNEL_DESTROY:int"],
+   [37, "CHANNEL_CTL:enter"], [165, "CHANNEL_CTL:exit"], [293, "CHANNEL_CTL:int"], [39, "CONNECT_ATTACH:enter"], [167, "CONNECT_ATTACH:exit"], [295, "CONNECT_ATTACH:int"],
+   [40, "CONNECT_DETACH:enter"], [168, "CONNECT_DETACH:exit"], [296, "CONNECT_DETACH:int"], [41, "CONNECT_SERVER_INFO:enter"], [169, "CONNECT_SERVER_INFO:exit"], [297, "CONNECT_SERVER_INFO:int"],
+   [42, "CONNECT_CLIENT_INFO:enter"], [170, "CONNECT_CLIENT_INFO:exit"], [298, "CONNECT_CLIENT_INFO:int"], [43, "CONNECT_FLAGS:enter"], [171, "CONNECT_FLAGS:exit"], [299, "CONNECT_FLAGS:int"],
+   [44, "CONNECT_DUPFD:enter"], [172, "CONNECT_DUPFD:exit"], [300, "CONNECT_DUPFD:int"], [46, "THREAD_CREATE:enter"], [174, "THREAD_CREATE:exit"], [302, "THREAD_CREATE:int"],
+   [47, "THREAD_DESTROY:enter"], [175, "THREAD_DESTROY:exit"], [303, "THREAD_DESTROY:int"], [49, "THREAD_DETACH:enter"], [177, "THREAD_DETACH:exit"], [305, "THREAD_DETACH:int"],
+   [50, "THREAD_JOIN:enter"], [178, "THREAD_JOIN:exit"], [306, "THREAD_JOIN:int"], [51, "THREAD_CANCEL:enter"], [179, "THREAD_CANCEL:exit"], [307, "THREAD_CANCEL:int"],
+   [52, "THREAD_CTL:enter"], [180, "THREAD_CTL:exit"], [308, "THREAD_CTL:int"], [53, "THREAD_CTLEXT:enter"], [181, "THREAD_CTLEXT:exit"], [309, "THREAD_CTLEXT:int"],
+   [55, "INTERRUPT_ATTACH:enter"], [183, "INTERRUPT_ATTACH:exit"], [311, "INTERRUPT_ATTACH:int"], [56, "INTERRUPT_QUERY:enter"], [184, "INTERRUPT_QUERY:exit"], [312, "INTERRUPT_QUERY:int"],
+   [57, "INTERRUPT_DETACH:enter"], [185, "INTERRUPT_DETACH:exit"], [313, "INTERRUPT_DETACH:int"], [58, "INTERRUPT_WAIT:enter"], [186, "INTERRUPT_WAIT:exit"], [314, "INTERRUPT_WAIT:int"],
+   [59, "INTERRUPT_MASK:enter"], [187, "INTERRUPT_MASK:exit"], [315, "INTERRUPT_MASK:int"], [60, "INTERRUPT_UNMASK:enter"], [188, "INTERRUPT_UNMASK:exit"], [316, "INTERRUPT_UNMASK:int"],
+   [61, "INTERRUPT_UNBLOCK:enter"], [189, "INTERRUPT_UNBLOCK:exit"], [317, "INTERRUPT_UNBLOCK:int"], [62, "INTERRUPT_CTL:enter"], [190, "INTERRUPT_CTL:exit"], [318, "INTERRUPT_CTL:int"],
+   [65, "CLOCK_TIME:enter"], [193, "CLOCK_TIME:exit"], [321, "CLOCK_TIME:int"], [66, "CLOCK_ADJUST:enter"], [194, "CLOCK_ADJUST:exit"], [322, "CLOCK_ADJUST:int"],
+   [67, "CLOCK_PERIOD:enter"], [195, "CLOCK_PERIOD:exit"], [323, "CLOCK_PERIOD:int"], [68, "CLOCK_ID:enter"], [196, "CLOCK_ID:exit"], [324, "CLOCK_ID:int"],
+   [70, "TIMER_CREATE:enter"], [198, "TIMER_CREATE:exit"], [326, "TIMER_CREATE:int"], [71, "TIMER_DESTROY:enter"], [199, "TIMER_DESTROY:exit"], [327, "TIMER_DESTROY:int"],
+   [72, "TIMER_SETTIME:enter"], [200, "TIMER_SETTIME:exit"], [328, "TIMER_SETTIME:int"], [73, "TIMER_INFO:enter"], [201, "TIMER_INFO:exit"], [329, "TIMER_INFO:int"],
+   [74, "TIMER_ALARM:enter"], [202, "TIMER_ALARM:exit"], [330, "TIMER_ALARM:int"], [75, "TIMER_TIMEOUT:enter"], [203, "TIMER_TIMEOUT:exit"], [331, "TIMER_TIMEOUT:int"],
+   [76, "TIMER_DELEGATE:enter"], [204, "TIMER_DELEGATE:exit"], [332, "TIMER_DELEGATE:int"], [77, "SYNC_RWLOCK:enter"], [205, "SYNC_RWLOCK:exit"], [333, "SYNC_RWLOCK:int"],
+   [78, "SYNC_CREATE:enter"], [206, "SYNC_CREATE:exit"], [334, "SYNC_CREATE:int"], [79, "SYNC_DESTROY:enter"], [207, "SYNC_DESTROY:exit"], [335, "SYNC_DESTROY:int"],
+   [80, "SYNC_MUTEX_LOCK:enter"], [208, "SYNC_MUTEX_LOCK:exit"], [336, "SYNC_MUTEX_LOCK:int"], [81, "SYNC_MUTEX_UNLOCK:enter"], [209, "SYNC_MUTEX_UNLOCK:exit"], [337, "SYNC_MUTEX_UNLOCK:int"],
+   [82, "SYNC_CONDVAR_WAIT:enter"], [210, "SYNC_CONDVAR_WAIT:exit"], [338, "SYNC_CONDVAR_WAIT:int"], [83, "SYNC_CONDVAR_SIGNAL:enter"], [211, "SYNC_CONDVAR_SIGNAL:exit"], [339, "SYNC_CONDVAR_SIGNAL:int"],
+   [84, "SYNC_SEM_POST:enter"], [212, "SYNC_SEM_POST:exit"], [340, "SYNC_SEM_POST:int"], [85, "SYNC_SEM_WAIT:enter"], [213, "SYNC_SEM_WAIT:exit"], [341, "SYNC_SEM_WAIT:int"],
+   [86, "SYNC_CTL:enter"], [214, "SYNC_CTL:exit"], [342, "SYNC_CTL:int"], [87, "SYNC_BARRIER_WAIT:enter"], [215, "SYNC_BARRIER_WAIT:exit"], [343, "SYNC_BARRIER_WAIT:int"],
+   [88, "SCHED_GET:enter"], [216, "SCHED_GET:exit"], [344, "SCHED_GET:int"], [89, "SCHED_SET:enter"], [217, "SCHED_SET:exit"], [345, "SCHED_SET:int"],
+   [90, "SCHED_YIELD:enter"], [218, "SCHED_YIELD:exit"], [346, "SCHED_YIELD:int"], [91, "SCHED_INFO:enter"], [219, "SCHED_INFO:exit"], [347, "SCHED_INFO:int"],
+   [92, "SCHED_CTL:enter"], [220, "SCHED_CTL:exit"], [348, "SCHED_CTL:int"], [93, "MSG_QUEUE_OPEN:enter"], [221, "MSG_QUEUE_OPEN:exit"], [349, "MSG_QUEUE_OPEN:int"],
+   [94, "MSG_QUEUE_SEND:enter"], [222, "MSG_QUEUE_SEND:exit"], [350, "MSG_QUEUE_SEND:int"], [95, "MSG_QUEUE_RECEIVE:enter"], [223, "MSG_QUEUE_RECEIVE:exit"], [351, "MSG_QUEUE_RECEIVE:int"],
+   [96, "MSG_QUEUE_CLOSE:enter"], [224, "MSG_QUEUE_CLOSE:exit"], [352, "MSG_QUEUE_CLOSE:int"], [97, "MSG_QUEUE_CTL:enter"], [225, "MSG_QUEUE_CTL:exit"], [353, "MSG_QUEUE_CTL:int"],
+   [98, "PIPE_OPEN:enter"], [226, "PIPE_OPEN:exit"], [354, "PIPE_OPEN:int"], [99, "PIPE_CTL:enter"], [227, "PIPE_CTL:exit"], [355, "PIPE_CTL:int"],
+   [100, "PIPE_CLOSE:enter"], [228, "PIPE_CLOSE:exit"], [356, "PIPE_CLOSE:int"], [104, "SYNC_TYPE_DESTROY:enter"], [232, "SYNC_TYPE_DESTROY:exit"], [360, "SYNC_TYPE_DESTROY:int"],
+   [105, "TEST:enter"], [233, "TEST:exit"], [361, "TEST:int"], [106, "SYS_CUSTOM:enter"], [234, "SYS_CUSTOM:exit"], [362, "SYS_CUSTOM:int"],
+   [107, "BAD:enter"], [235, "BAD:exit"], [363, "BAD:int"]
+  ]},
+  {"value": 3, "name": "INT", "bit64": 0, "events": [
+   [7, "DELIVER"]
+  ]},
+  {"value": 4, "name": "PR_TH", "bit64": 0, "events": [
+   [0, "THDEAD"], [1, "THRUNNING"], [2, "THREADY"], [3, "THSTOPPED"], [4, "THSEND"], [5, "THRECEIVE"],
+   [6, "THREPLY"], [7, "THMQ_SEND"], [8, "THMQ_RECEIVE"], [9, "THWAITPAGE"], [10, "THSIGSUSPEND"], [11, "THSIGWAITINFO"],
+   [12, "THNANOSLEEP"], [13, "THMUTEX"], [14, "THCONDVAR"], [15, "THJOIN"], [16, "THINTR"], [17, "THSEM"],
+   [18, "THWAITCTX"], [19, "THRWLOCK_READ"], [20, "THRWLOCK_WRITE"], [21, "THBARRIER"], [22, "THPIPE"], [24, "THCREATE"],
+   [25, "THDESTROY"], [26, "THMUON_MUTEX"], [27, "THTRACEBUFFER"], [28, "THINTR_ATTACH_EV"], [29, "THTIMER_DELEGATE"], [64, "CREATE_P"],
+   [87, "CREATE_VT"], [88, "DESTROY_VT"], [128, "DESTROY_P"], [192, "CREATE_P_NAME"], [256, "DESTROY_P_NAME"], [320, "NAME_T"]
+  ]},
+  {"value": 5, "name": "SYSTEM", "bit64": 512, "events": [
+   [1, "RESERVED"], [2, "PATHMGR"], [3, "APS_NAME"], [4, "APS_BUDGETS"], [5, "APS_BNKR"], [6, "MMAP"],
+   [7, "MUNMAP"], [8, "MAPNAME"], [9, "ADDRESS"], [10, "FUNC_ENTER"], [11, "FUNC_EXIT"], [12, "SLOG"],
+   [13, "DEFRAG_START"], [14, "RUNSTATE"], [15, "POWER"], [16, "IPI"], [17, "PAGEWAIT"], [18, "TIMER"],
+   [19, "DEFRAG_END"], [20, "PROFILE"], [21, "MAPNAME_64"], [22, "APS_PSTATS"], [23, "APS_OSTATS"], [24, "APS_INFO"],
+   [25, "APS_JOIN"], [26, "APS_THREAD"], [27, "APS_PROCESS"], [28, "SCHED_CONF"], [29, "IST_ATTACH"], [30, "IST_DETACH"],
+   [31, "PCTRACE"]
+  ]},
+  {"value": 6, "name": "USER", "bit64": 0, "events": [
+  ]},
+  {"value": 7, "name": "COMM", "bit64": 0, "events": [
+   [0, "SMSG"], [1, "SPULSE"], [2, "RMSG"], [3, "RPULSE"], [4, "SPULSE_EXE"], [5, "SPULSE_DIS"],
+   [6, "SPULSE_DEA"], [7, "SPULSE_UN"], [8, "SPULSE_QUN"], [9, "SIGNAL"], [10, "REPLY"], [11, "ERROR"]
+  ]},
+  {"value": 8, "name": "QUIP", "bit64": 0, "events": [
+  ]},
+  {"value": 9, "name": "SEC", "bit64": 0, "events": [
+   [0, "ABLE"], [1, "ABLE_LOOKUP"], [2, "PATH_ATTACH"], [3, "QNET_CONNECT"], [4, "PERM_LOOKUP"], [5, "PERM_TEST"],
+   [6, "UNREG_EVENT"], [7, "OPEN_EVENT"]
+  ]},
+  {"value": 10, "name": "QVM", "bit64": 0, "events": [
+   [0, "GUEST_ENTER"], [1, "GUEST_EXIT"], [2, "CREATE_VCPU_THREAD"], [3, "RAISE_INTR"], [4, "LOWER_INTR"], [5, "TIMER_CREATE"],
+   [6, "TIMER_FIRE"], [7, "CYCLES"]
+  ]}
+ ]
+}
+</script>
+<script>
+"use strict";
+// ==== CORE BEGIN(画面に依存しない部分。tests/test_kevedit.mjs からも読む)
+
+/** このツールの設定(数を変えるときはここだけ直す) */
+const CONF = {
+  newRows: 100,              // 新規作成時のスロット行数
+  addRows: 100,              // 「行を追加」で足す行数
+  pageSize: 500,             // 1 ページに表示するスロット行数
+  maxSlots: 200000,          // 読み込むスロットの上限(超えた分は読まない)
+  headerScanBytes: 16 << 20, // ヘッダの終わりを探す範囲
+  strBytes: 8,               // payload 2 語の文字列のバイト数(payload[0] の文字列欄はここまで入り、4 バイトを超えた分は payload[1] へ)
+  wordBytes: 4,              // payload 1 語の文字列のバイト数
+  csv: {
+    on: "on", off: "off",
+    sections: { header: "[header]", syspage: "[syspage]", slots: "[slots]" },
+    headerCols: ["key", "value"], // kev のヘッダ = 有効な行の key + value をつないだもの(key は区切りを含む)
+    syspageCols: ["offset", "bytes"],
+    syspageRowBytes: 16,
+    slotCols: ["header", "stamp", "payload0", "payload1"], // 読み込むのはこの 4 列(スロットの 4 語)
+    slotInfoCols: [                                          // 参考。読み込みでは使わない
+      "(struct)", "(cpu)", "(flags)", "(class_name)", "(class)", "(event_name)", "(event)",
+      "(payload0_str)", "(payload0_dec)", "(payload1_str)", "(payload1_dec)",
+    ],
+  },
+  // トレースバッファの補助
+  bufferSlots: 1011,         // 1 トレースバッファのスロット数の上限(_TRACELEMENTS。QNX 8.0 の値)
+  bufferSeqStart: 1,         // その CPU に BUFFER が無いときの通番
+  maxBufferRows: 300,        // トレースバッファの一覧に出す行数
+};
+
+function makeCore(D) {
+  const L = D.layout;
+  const FIELDS = ["struct", "cpu", "class", "event", "flags"];
+  const u32 = (x) => x >>> 0;
+  const fmask = (f) => u32(L[f].mask << L[f].shift);
+  const FIELD_MASK = FIELDS.reduce((a, f) => u32(a | fmask(f)), 0);
+  const REST_MASK = u32(~FIELD_MASK);
+  const H = D.header;
+  const SB = D.slot_bytes;
+
+  // ---- ヘッダ語のフィールド
+  function getF(h, f) { return (h >>> L[f].shift) & L[f].mask; }
+  function setF(h, f, v) { return u32((h & ~fmask(f)) | ((v & L[f].mask) << L[f].shift)); }
+  function rest(h) { return u32(h & REST_MASK); }
+
+  // ---- 名前
+  const structByVal = new Map(D.structs.map(([v, n]) => [v, n]));
+  const classByVal = new Map();
+  for (const c of D.classes) { c.byVal = new Map(c.events.map(([v, n]) => [v, n])); classByVal.set(c.value, c); }
+  function structName(v) { return structByVal.get(v) ?? null; }
+  function className(v) { const c = classByVal.get(v); return c ? c.name : null; }
+  function eventName(cv, ev) {
+    const c = classByVal.get(cv);
+    if (!c) return null;
+    let n = c.byVal.get(ev);
+    if (n) return n;
+    if (c.bit64 && (ev & c.bit64)) { n = c.byVal.get(ev & ~c.bit64); if (n) return n + ":64"; }
+    return null;
+  }
+
+  // ---- 数値
+  /** u32 を読む。10 進、0x 付き 16 進、負の 10 進(2 の補数)。hex = true なら 0x が無くても 16 進 */
+  function parseU32(s, hex = false) {
+    s = String(s).trim().replace(/_/g, "");
+    let v;
+    if (/^0x[0-9a-f]+$/i.test(s)) v = parseInt(s.slice(2), 16);
+    else if (hex && /^[0-9a-f]+$/i.test(s)) v = parseInt(s, 16);
+    else if (/^-?\d+$/.test(s)) v = Number(s);
+    else throw new Error(`数値ではありません: "${s}"`);
+    if (v < -0x80000000 || v > 0xffffffff) throw new Error(`32 ビットに収まりません: ${s}`);
+    return u32(v);
+  }
+  function parseField(s, f, hex = false) {
+    const v = parseU32(s, hex);
+    if (v > L[f].mask) throw new Error(`${f} は 0〜${L[f].mask} です: ${s}`);
+    return v;
+  }
+  const hex8 = (v) => "0x" + u32(v).toString(16).padStart(8, "0");
+  const hex2 = (v) => "0x" + v.toString(16).padStart(2, "0");
+
+  // ---- 文字列(payload 2 語のバイト列。バイト順はファイルのもの)
+  function wordsToBytes(d1, d2, le) {
+    const b = new Uint8Array(8), v = new DataView(b.buffer);
+    v.setUint32(0, d1, le); v.setUint32(4, d2, le);
+    return b;
+  }
+  function bytesToWords(b, le) {
+    const p = new Uint8Array(8); p.set(b.subarray(0, 8));
+    const v = new DataView(p.buffer);
+    return [v.getUint32(0, le), v.getUint32(4, le)];
+  }
+  function wordsToStr(d1, d2, le) { return bytesToStr(wordsToBytes(d1, d2, le)); }
+  function wordToStr(d, le) { return bytesToStr(wordsToBytes(d, 0, le).subarray(0, 4)); }
+  function strToWords(s, le) { return bytesToWords(strToBytes(s, CONF.strBytes), le); }
+  /** 末尾の NUL は省く。表示できないバイトと \ は \xHH / \\ で書く */
+  function bytesToStr(b) {
+    let n = b.length;
+    while (n > 0 && b[n - 1] === 0) n--;
+    let s = "";
+    for (let i = 0; i < n; i++) {
+      const c = b[i];
+      if (c === 0x5c) s += "\\\\";
+      else if (c >= 0x20 && c < 0x7f) s += String.fromCharCode(c);
+      else s += "\\x" + c.toString(16).padStart(2, "0");
+    }
+    return s;
+  }
+  /** 文字列 → バイト列(max バイトまで) */
+  function strToBytes(s, max) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === "\\") {
+        if (s[i + 1] === "\\") { out.push(0x5c); i++; continue; }
+        const m = /^x([0-9a-fA-F]{2})/.exec(s.slice(i + 1));
+        if (!m) throw new Error(`\\ の後は \\\\ か \\xHH です`);
+        out.push(parseInt(m[1], 16)); i += 3; continue;
+      }
+      const c = ch.charCodeAt(0);
+      if (c > 0xff) throw new Error(`latin-1 の範囲外の文字です: ${ch}`);
+      out.push(c);
+    }
+    if (out.length > max) throw new Error(`${max} バイトを超えています(${out.length} バイト)`);
+    return Uint8Array.from(out);
+  }
+
+  // ---- 文書
+  // ヘッダの行 = { on, key, value }。key は区切りまで含む(例: "TRACE_VER_MAJOR::")。
+  // kev のヘッダは有効な行の key + value をそのままつないだ文字列。
+  // 意味(エンディアン、SYSPAGE_LEN など)は、つないだ文字列を kev と同じ規則で読み直して決める。
+  function newSlot(fresh = false) { return { on: !fresh, fresh, h: 0, stamp: 0, d1: 0, d2: 0 }; }
+  function newHeaderRow() { return { on: true, key: "", value: "" }; } // 空の行は何も出さない
+  function newDoc() {
+    return {
+      header: D.new_header.map(([key, value]) => ({ on: true, key: key + H.postfix, value })),
+      syspage: [],
+      slots: Array.from({ length: CONF.newRows }, () => newSlot(true)),
+      notes: [],
+    };
+  }
+  function headerText(header) { return header.filter((x) => x.on).map((x) => x.key + x.value).join(""); }
+  const keyRe = () => new RegExp(reEsc(H.prefix) + "[A-Z0-9_]+" + reEsc(H.postfix), "g");
+  /** ヘッダの文字列を項目に分ける(HEADER_END まで)。end = HEADER_END の直後の位置(無ければ -1) */
+  function splitHeader(text) {
+    const re = keyRe(), keys = [];
+    let end = -1, m;
+    while ((m = re.exec(text))) {
+      const key = m[0].slice(0, m[0].length - H.postfix.length);
+      keys.push({ key, start: m.index, vstart: m.index + m[0].length });
+      if (key === H.end) { end = m.index + m[0].length; break; }
+    }
+    const items = keys.map((k, i) => ({ key: k.key, start: k.start, value: text.slice(k.vstart, i + 1 < keys.length ? keys[i + 1].start : k.vstart) }));
+    return { items, end };
+  }
+  /** ヘッダから読む値(同じキーが複数なら最後。無ければ null) */
+  function headerValue(header, key) {
+    let v = null;
+    for (const x of splitHeader(headerText(header)).items) if (x.key === key) v = x.value;
+    return v;
+  }
+  /** LITTLE_ENDIAN があればリトル、無くて BIG_ENDIAN があればビッグ、どちらも無ければリトル */
+  function littleEndian(header) {
+    if (headerValue(header, H.little_endian) !== null) return true;
+    if (headerValue(header, H.big_endian) !== null) return false;
+    return true;
+  }
+  function syspageLen(header) {
+    const v = headerValue(header, H.syspage_len);
+    if (v === null || v.trim() === "") return 0;
+    if (!/^\s*\d+\s*$/.test(v)) return NaN;
+    return Number(v);
+  }
+
+  function latin1(b, start, end) {
+    let s = "";
+    for (let i = start; i < end; i += 8192) s += String.fromCharCode.apply(null, b.subarray(i, Math.min(end, i + 8192)));
+    return s;
+  }
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  /** kev のバイト列 → 文書 */
+  function parseKev(buf) {
+    const notes = [];
+    const text = latin1(buf, 0, Math.min(buf.length, CONF.headerScanBytes));
+    const { items, end } = splitHeader(text);
+    if (end < 0) throw new Error(`ヘッダの終わり(${H.end}${H.postfix})が見つかりません`);
+    const header = items.map((x) => ({ on: true, key: x.key + H.postfix, value: x.value }));
+    if (items[0].start > 0) { // 最初のキーより前のバイトも 1 行として持つ(書き出すと元に戻る)
+      header.unshift({ on: true, key: "", value: text.slice(0, items[0].start) });
+      notes.push(["warn", `ヘッダの最初のキーより前に ${items[0].start} バイトあります(1 行目)`]);
+    }
+
+    let sp = syspageLen(header);
+    if (Number.isNaN(sp)) { notes.push(["warn", `${H.syspage_len} が数値ではないので 0 として読みます`]); sp = 0; }
+    if (end + sp > buf.length) { notes.push(["warn", `syspage が ${sp - (buf.length - end)} バイト足りません`]); sp = buf.length - end; }
+    const syspage = [];
+    for (let o = 0; o < sp; o += CONF.csv.syspageRowBytes) {
+      syspage.push({ on: true, bytes: buf.slice(end + o, end + Math.min(sp, o + CONF.csv.syspageRowBytes)) });
+    }
+
+    const base = end + sp;
+    let n = Math.floor((buf.length - base) / SB);
+    const tail = (buf.length - base) % SB;
+    if (tail) notes.push(["warn", `末尾の ${tail} バイト(スロットに満たない端数)は読み込みません`]);
+    if (n > CONF.maxSlots) {
+      notes.push(["err", `スロットが ${n} 個あります。先頭の ${CONF.maxSlots} 個だけ読みました(保存すると残りは失われます)`]);
+      n = CONF.maxSlots;
+    }
+    const le = littleEndian(header);
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const slots = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const o = base + i * SB;
+      slots[i] = { on: true, fresh: false, h: dv.getUint32(o, le), stamp: dv.getUint32(o + 4, le), d1: dv.getUint32(o + 8, le), d2: dv.getUint32(o + 12, le) };
+    }
+    return { header, syspage, slots, notes };
+  }
+
+  /** 文書 → kev のバイト列(無効の行は出さない) */
+  function buildKev(doc) {
+    const hs = headerText(doc.header);
+    for (let i = 0; i < hs.length; i++) {
+      if (hs.charCodeAt(i) > 0xff) throw new Error(`ヘッダに latin-1 の範囲外の文字があります: ${hs[i]}`);
+    }
+    const sys = doc.syspage.filter((x) => x.on);
+    const slots = doc.slots.filter((x) => x.on);
+    const spLen = sys.reduce((a, x) => a + x.bytes.length, 0);
+    const out = new Uint8Array(hs.length + spLen + slots.length * SB);
+    for (let i = 0; i < hs.length; i++) out[i] = hs.charCodeAt(i);
+    let o = hs.length;
+    for (const x of sys) { out.set(x.bytes, o); o += x.bytes.length; }
+    const le = littleEndian(doc.header);
+    const dv = new DataView(out.buffer);
+    for (const s of slots) {
+      dv.setUint32(o, s.h, le); dv.setUint32(o + 4, s.stamp, le); dv.setUint32(o + 8, s.d1, le); dv.setUint32(o + 12, s.d2, le);
+      o += SB;
+    }
+    return out;
+  }
+
+  /** 書き出す前に気づける点(保存は止めない) */
+  function check(doc) {
+    const out = [];
+    const text = headerText(doc.header);
+    const { items, end } = splitHeader(text);
+    if (end < 0) out.push(["err", `ヘッダに ${H.end}${H.postfix} がありません(kev として読めません)`]);
+    else if (end < text.length) out.push(["warn", `${H.end}${H.postfix} の後ろの ${text.length - end} 文字は syspage として読まれます`]);
+    if (!items.length || items[0].key !== H.begin || items[0].start !== 0) out.push(["warn", `ヘッダが ${H.begin}${H.postfix} で始まっていません`]);
+    for (const k of [H.ver_major, H.ver_minor]) {
+      if (headerValue(doc.header, k) === null) out.push(["warn", `${k} がありません(traceprinter が読みません)`]);
+    }
+    const sp = syspageLen(doc.header);
+    const actual = doc.syspage.filter((x) => x.on).reduce((a, x) => a + x.bytes.length, 0);
+    if (Number.isNaN(sp)) out.push(["warn", `${H.syspage_len} が数値ではありません`]);
+    else if (sp !== actual) out.push(["warn", `${H.syspage_len} は ${sp} ですが、出力する syspage は ${actual} バイトです`]);
+    return out;
+  }
+
+  // ---- CSV
+  const C = CONF.csv;
+  function csvCell(s) {
+    s = String(s);
+    return /[",\r\n]|^\s|\s$/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function csvLine(cells) { return cells.map(csvCell).join(","); }
+  function parseCsv(text) {
+    const rows = [];
+    let row = [], cell = "", q = false, line = 1, rowLine = 1;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else { if (c === "\n") line++; cell += c; }
+      } else if (c === '"') q = true;
+      else if (c === ",") { row.push(cell); cell = ""; }
+      else if (c === "\n" || c === "\r") {
+        if (c === "\r" && text[i + 1] === "\n") i++;
+        row.push(cell); rows.push({ line: rowLine, cells: row }); row = []; cell = ""; line++; rowLine = line;
+      } else cell += c;
+    }
+    if (cell !== "" || row.length) { row.push(cell); rows.push({ line: rowLine, cells: row }); }
+    return rows;
+  }
+
+  /** 文書 → CSV(新規作成でまだ触っていない行は書かない) */
+  function toCsv(doc) {
+    const le = littleEndian(doc.header);
+    const L2 = [];
+    const flag = (x) => (x.on ? C.on : C.off);
+    L2.push(csvLine([C.sections.header, ...C.headerCols]));
+    for (const x of doc.header) L2.push(csvLine([flag(x), x.key, x.value]));
+    L2.push(csvLine([C.sections.syspage, ...C.syspageCols]));
+    let off = 0;
+    for (const x of doc.syspage) {
+      L2.push(csvLine([flag(x), off, "0x" + Array.from(x.bytes, (b) => b.toString(16).padStart(2, "0")).join("")]));
+      off += x.bytes.length;
+    }
+    L2.push(csvLine([C.sections.slots, ...C.slotCols, ...C.slotInfoCols]));
+    for (const s of doc.slots) {
+      if (s.fresh) continue;
+      const st = getF(s.h, "struct"), cv = getF(s.h, "class"), ev = getF(s.h, "event");
+      L2.push(csvLine([
+        flag(s), hex8(s.h), hex8(s.stamp), hex8(s.d1), hex8(s.d2),
+        structName(st) ?? st, getF(s.h, "cpu"), hex2(getF(s.h, "flags")),
+        className(cv) ?? "", cv, eventName(cv, ev) ?? "", ev,
+        wordToStr(s.d1, le), s.d1, wordToStr(s.d2, le), s.d2,
+      ]));
+    }
+    return L2.join("\r\n") + "\r\n";
+  }
+
+  /** CSV → 文書。誤りは行番号つきでまとめて投げる */
+  function fromCsv(text) {
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    const doc = { header: [], syspage: [], slots: [], notes: [] };
+    const errs = [];
+    const secByName = new Map(Object.entries(C.sections).map(([k, v]) => [v, k]));
+    let sec = null;
+    for (const { line, cells } of parseCsv(text)) {
+      if (cells.every((c) => c.trim() === "")) continue;
+      const kind = cells[0].trim();
+      const cell = (i) => (i < cells.length ? cells[i] : "");
+      try {
+        if (kind.startsWith("[")) {
+          sec = secByName.get(kind);
+          if (!sec) throw new Error(`知らないセクションです: ${kind}`);
+          continue;
+        }
+        const k = kind.toLowerCase();
+        if (k !== C.on && k !== C.off) throw new Error(`1 列目は ${C.on} / ${C.off} / セクション名です: "${kind}"`);
+        const on = k === C.on;
+        if (!sec) throw new Error("セクション名の行より前にデータがあります");
+        if (sec === "header") {
+          doc.header.push({ on, key: cell(1), value: cell(2) }); // 前後の空白も文字として扱う
+        } else if (sec === "syspage") {
+          const hx = cell(2).trim().replace(/^0x/i, "").replace(/\s+/g, "");
+          if (!/^([0-9a-f]{2})*$/i.test(hx)) throw new Error(`bytes は 16 進のバイト列です: ${cell(2)}`);
+          doc.syspage.push({ on, bytes: Uint8Array.from(hx.match(/../g) ?? [], (x) => parseInt(x, 16)) });
+        } else {
+          const word = (i) => {
+            if (cell(i).trim() === "") throw new Error(`${C.slotCols[i - 1]} が空です`);
+            try { return parseU32(cell(i)); } catch (e) { throw new Error(`${C.slotCols[i - 1]}: ${e.message}`); }
+          };
+          doc.slots.push({ on, fresh: false, h: word(1), stamp: word(2), d1: word(3), d2: word(4) });
+        }
+      } catch (e) {
+        errs.push(`${line} 行目: ${e.message}`);
+      }
+    }
+    if (errs.length) {
+      const more = errs.length > 20 ? `\n…ほか ${errs.length - 20} 件` : "";
+      throw new Error("CSV を読めませんでした\n" + errs.slice(0, 20).join("\n") + more);
+    }
+    return doc;
+  }
+
+  // ---- トレースバッファ(TIME, BUFFER, イベント…, BUFFER_END)
+  const CT = D.control, CW = CT.words;
+  const isCtl = (s, e) => getF(s.h, "class") === CT.class && getF(s.h, "event") === e;
+  const isFrame = (s) => isCtl(s, CT.time) || isCtl(s, CT.buffer) || isCtl(s, CT.buffer_end);
+  const pv = (s, k) => (k === 0 ? s.d1 : s.d2); // payload の k 語目
+  const pw = (pairs) => { const w = [0, 0]; for (const [k, v] of pairs) w[k] = u32(v); return w; };
+  function ctlSlot(cpu, ev, stamp, w) {
+    let h = setF(0, "cpu", cpu);
+    h = setF(h, "class", CT.class);
+    h = setF(h, "event", ev);
+    return { on: true, fresh: false, h, stamp: u32(stamp), d1: w[0], d2: w[1] };
+  }
+
+  /** 有効なスロットをファイル順に見て、CPU ごとのトレースバッファと気づいた点を返す(行番号は 0 から) */
+  function analyzeBuffers(slots) {
+    const bufs = [], issues = [];
+    const st = new Map();
+    const get = (c) => {
+      if (!st.has(c)) st.set(c, { open: null, lastSeq: null, prev: -1, pendingTime: -1, outside: [] });
+      return st.get(c);
+    };
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      if (!s.on) continue;
+      const cpu = getF(s.h, "cpu"), c = get(cpu);
+      for (const [oc, o] of st) {
+        if (oc !== cpu && o.open && !o.open.interleaved) {
+          o.open.interleaved = true;
+          o.open.issues.push(`途中に CPU ${cpu} のスロットがある(${i + 1} 行)`);
+        }
+      }
+      if (isCtl(s, CT.buffer)) {
+        if (c.open) { c.open.issues.push("BUFFER_END が無いまま次の BUFFER"); bufs.push(c.open); }
+        let first = i, actual = 1;
+        if (c.pendingTime >= 0) { first = c.pendingTime; actual = 2; c.outside.pop(); } // 直前の TIME から数える
+        const seq = pv(s, CW.buffer_sequence);
+        const b = { cpu, seq, declared: pv(s, CW.buffer_num_events), first, row: i, last: i, actual, closed: false, issues: [], interleaved: false };
+        if (c.lastSeq !== null && seq !== u32(c.lastSeq + 1)) b.issues.push(`通番が ${c.lastSeq} の次に ${seq}`);
+        c.lastSeq = seq;
+        c.open = b;
+      } else if (c.open) {
+        c.open.actual++;
+        c.open.last = i;
+        if (isCtl(s, CT.buffer_end)) {
+          if (s.d1 !== D.cookie || s.d2 !== D.cookie) c.open.issues.push(`BUFFER_END の cookie が ${hex8(D.cookie)} ではない`);
+          c.open.closed = true;
+          bufs.push(c.open);
+          c.open = null;
+        }
+      } else if (isCtl(s, CT.buffer_end)) {
+        issues.push([i, `CPU ${cpu}: BUFFER の無い BUFFER_END(${i + 1} 行)`]);
+      } else {
+        c.outside.push(i);
+      }
+      c.pendingTime = !c.open && isCtl(s, CT.time) ? i : -1;
+      c.prev = i;
+    }
+    for (const [cpu, c] of st) {
+      if (c.open) { c.open.issues.push("BUFFER_END が無いまま終わる"); bufs.push(c.open); }
+      if (c.outside.length) issues.push([c.outside[0], `CPU ${cpu}: トレースバッファの外のスロットが ${c.outside.length} 個(最初は ${c.outside[0] + 1} 行)`]);
+    }
+    for (const b of bufs) {
+      if (b.closed && b.declared !== b.actual) b.issues.push(`スロット数が BUFFER では ${b.declared}、実際は ${b.actual}`);
+      if (b.actual > CONF.bufferSlots) b.issues.push(`上限 ${CONF.bufferSlots} スロットを超えている`);
+    }
+    bufs.sort((a, b) => a.first - b.first);
+    return { bufs, issues };
+  }
+
+  /** BUFFER_END で閉じたトレースバッファの BUFFER のスロット数を、実際の数に直す。直した数を返す */
+  function fixBufferCounts(slots) {
+    let n = 0;
+    for (const b of analyzeBuffers(slots).bufs) {
+      if (!b.closed || b.declared === b.actual) continue;
+      const s = slots[b.row];
+      if (CW.buffer_num_events === 0) s.d1 = b.actual; else s.d2 = b.actual;
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * スロットの末尾(新規の空行より前)に TIME・BUFFER・BUFFER_END の 3 行を足す。
+   * CPU と stamp は直前の有効なスロットから(無ければ 0)。通番はその CPU の最後の BUFFER の次、
+   * TIME の上位 32bit はその CPU の最後の TIME から。BUFFER のスロット数は 3(枠だけ)。
+   * 足した位置(0 から)・CPU・通番を返す
+   */
+  function addBuffer(slots) {
+    let at = slots.length;
+    while (at > 0 && slots[at - 1].fresh) at--;
+    let last = null;
+    for (let i = at - 1; i >= 0 && !last; i--) if (slots[i].on) last = slots[i];
+    const cpu = last ? getF(last.h, "cpu") : 0, stamp = last ? last.stamp : 0;
+    let seq = CONF.bufferSeqStart, msb = 0;
+    for (let i = 0; i < at; i++) {
+      const s = slots[i];
+      if (!s.on || getF(s.h, "cpu") !== cpu) continue;
+      if (isCtl(s, CT.buffer)) seq = u32(pv(s, CW.buffer_sequence) + 1);
+      if (isCtl(s, CT.time)) msb = pv(s, CW.time_msb);
+    }
+    slots.splice(at, 0,
+      ctlSlot(cpu, CT.time, stamp, pw([[CW.time_msb, msb], [CW.time_lsb, stamp]])),
+      ctlSlot(cpu, CT.buffer, stamp, pw([[CW.buffer_sequence, seq], [CW.buffer_num_events, 3]])),
+      ctlSlot(cpu, CT.buffer_end, stamp, [D.cookie, D.cookie]));
+    return { at, cpu, seq };
+  }
+
+  return {
+    analyzeBuffers, fixBufferCounts, addBuffer, isFrame,
+    D, L, getF, setF, rest, structName, className, eventName, classByVal,
+    parseU32, parseField, hex8, hex2, wordsToStr, wordToStr, strToWords, strToBytes, bytesToWords,
+    newSlot, newDoc, newHeaderRow, headerText, littleEndian, parseKev, buildKev, check, toCsv, fromCsv,
+  };
+}
+// ==== CORE END
+
+// ---------------------------------------------------------------- 画面
+const K = makeCore(JSON.parse(document.getElementById("defs").textContent));
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+let doc = K.newDoc();
+let page = 0;
+let loadNotes = [];
+let lastErr = null;
+let opNote = null; // 直前の補助操作の結果
+
+// ---- メッセージと集計
+function renderMsgs() {
+  const ana = K.analyzeBuffers(doc.slots);
+  const nIss = ana.issues.length + ana.bufs.filter((b) => b.issues.length).length;
+  const items = [
+    ...(lastErr ? [["err", lastErr]] : []), ...loadNotes, ...(opNote ? [opNote] : []), ...K.check(doc),
+    ...(nIss ? [["warn", `トレースバッファの注意が ${nIss} 件あります(「トレースバッファ」を参照)`]] : []),
+  ];
+  renderBuffers(ana);
+  $("msgs").innerHTML = items.map(([k, m]) => `<div class="${k}">${esc(m).replace(/\n/g, "<br>")}</div>`).join("");
+  const on = doc.slots.filter((s) => s.on).length;
+  $("summary").textContent = `スロット ${doc.slots.length} 行(出力 ${on})・${K.littleEndian(doc.header) ? "リトル" : "ビッグ"}エンディアン・定義 QNX ${K.D.release}`;
+}
+function setErr(m) { lastErr = m; renderMsgs(); }
+
+// ---- ヘッダ
+function renderHeader() {
+  $("hdr").tBodies[0].innerHTML = doc.header.map((x, i) => `
+    <tr data-i="${i}" class="${x.on ? "" : "off"}">
+      <td class="n">${i + 1}</td>
+      <td><input type="checkbox" data-f="on" ${x.on ? "checked" : ""}></td>
+      <td><input data-f="key" class="w20 mono" value="${esc(x.key)}" placeholder="${K.D.header.prefix}XXX${K.D.header.postfix}"></td>
+      <td><input data-f="value" class="w40 mono" value="${esc(x.value)}"></td>
+      <td class="ops"><button data-op="up" title="上へ">↑</button><button data-op="down" title="下へ">↓</button><button data-op="ins" title="下に挿入">＋</button><button data-op="del" title="削除">✕</button></td>
+    </tr>`).join("");
+  $("hdrInfo").textContent = `有効な行のキーと値をそのままつないだ ${K.headerText(doc.header).length} バイトがヘッダになります`;
+}
+$("hdr").addEventListener("change", (e) => {
+  const t = e.target, tr = t.closest("tr"); if (!tr) return;
+  const x = doc.header[+tr.dataset.i];
+  if (t.dataset.f === "on") x.on = t.checked; else x[t.dataset.f] = t.value;
+  lastErr = null; renderHeader(); renderSlots(); renderSys(); renderMsgs();
+});
+$("hdr").addEventListener("click", (e) => {
+  const op = e.target.dataset?.op; if (!op) return;
+  const i = +e.target.closest("tr").dataset.i, H = doc.header;
+  if (op === "up" && i > 0) [H[i - 1], H[i]] = [H[i], H[i - 1]];
+  else if (op === "down" && i + 1 < H.length) [H[i + 1], H[i]] = [H[i], H[i + 1]];
+  else if (op === "ins") H.splice(i + 1, 0, K.newHeaderRow());
+  else if (op === "del") H.splice(i, 1);
+  renderHeader(); renderSlots(); renderSys(); renderMsgs();
+});
+$("bHdrAdd").onclick = () => {
+  const H = doc.header, endAt = H.findIndex((x) => x.key === K.D.header.end + K.D.header.postfix);
+  H.splice(endAt < 0 ? H.length : endAt, 0, K.newHeaderRow());
+  renderHeader(); renderMsgs();
+};
+
+// ---- syspage(中身は表示しない。読み込んだものを保持して出力する)
+function renderSys() {
+  const total = doc.syspage.reduce((a, x) => a + x.bytes.length, 0);
+  if (!total) { $("sys").innerHTML = `<span class="muted">なし(0 バイト)</span>`; return; }
+  const allOn = doc.syspage.every((x) => x.on);
+  $("sys").innerHTML = `${total} バイト(読み込んだものをそのまま保持します。中身は表示しません) <label><input type="checkbox" id="sysOn" ${allOn ? "checked" : ""}> 出力する</label>`;
+  $("sysOn").onchange = (e) => { for (const x of doc.syspage) x.on = e.target.checked; renderMsgs(); };
+}
+
+// ---- スロット
+const structOpts = (v) => {
+  let s = K.D.structs.map(([n, name]) => `<option value="${n}" ${n === v ? "selected" : ""}>${name}</option>`).join("");
+  return s;
+};
+const classOpts = (v) => {
+  let s = K.className(v) === null ? `<option value="${v}" selected>? (${v})</option>` : "";
+  return s + K.D.classes.map((c) => `<option value="${c.value}" ${c.value === v ? "selected" : ""}>${c.name}</option>`).join("");
+};
+function eventOpts(cv, ev) {
+  const c = K.classByVal.get(cv);
+  const list = c ? c.events : [];
+  const known = list.some(([v]) => v === ev);
+  let s = known ? "" : `<option value="${ev}" selected>${esc(K.eventName(cv, ev) ?? "?")} (${ev})</option>`;
+  return s + list.map(([v, n]) => `<option value="${v}" ${v === ev ? "selected" : ""}>${esc(n)}</option>`).join("");
+}
+const STR_TIP = "1 語のバイト列(ファイルのバイト順)。末尾の NUL は省略、\\xHH と \\\\ で任意のバイト";
+function rowHtml(s, i, le) {
+  const g = (f) => K.getF(s.h, f);
+  const cv = g("class"), ev = g("event");
+  const evLabel = K.eventName(cv, ev);
+  return `<tr data-i="${i}" class="${s.on ? "" : "off"}">
+    <td class="n">${i + 1}</td>
+    <td><input type="checkbox" data-f="on" ${s.on ? "checked" : ""}></td>
+    <td><input data-f="header" class="w10 mono" value="${K.hex8(s.h)}" title="ヘッダ語(16 進。0x 無しも 16 進)"></td>
+    <td><input data-f="stamp" class="w10 mono" value="${K.hex8(s.stamp)}" title="時刻の下位 32bit(16 進。0x 無しも 16 進)"></td>
+    <td><input data-f="d1x" class="w10 mono" value="${K.hex8(s.d1)}" title="16 進"></td>
+    <td><input data-f="d2x" class="w10 mono" value="${K.hex8(s.d2)}" title="16 進"></td>
+    <td><select data-f="struct">${structOpts(g("struct"))}</select></td>
+    <td><input data-f="cpu" class="w3" value="${g("cpu")}"></td>
+    <td><input data-f="flags" class="w4 mono" value="${K.hex2(g("flags"))}" title="16 進"></td>
+    <td><div class="stack"><select data-f="className" class="cls">${classOpts(cv)}</select><input data-f="class" class="w3" value="${cv}"></div></td>
+    <td><div class="stack"><select data-f="eventName" class="ev" data-lazy="1"><option value="${ev}" selected>${esc(evLabel ?? `? (${ev})`)}</option></select><input data-f="event" class="w4" value="${ev}"></div></td>
+    <td><div class="stack"><input data-f="s1" class="w10 mono" value="${esc(K.wordToStr(s.d1, le))}" title="${STR_TIP}。${CONF.wordBytes} バイトを超えた分(${CONF.strBytes} バイトまで)は payload[1] に入ります"><input data-f="d1" class="w10" value="${s.d1}" title="10 進(負の数も可)"></div></td>
+    <td><div class="stack"><input data-f="s2" class="w10 mono" value="${esc(K.wordToStr(s.d2, le))}" title="${STR_TIP}"><input data-f="d2" class="w10" value="${s.d2}" title="10 進(負の数も可)"></div></td>
+    <td class="ops"><button data-op="ins" title="下に空の行を挿入">＋</button><button data-op="dup" title="下に複製">⧉</button><button data-op="del" title="削除">✕</button></td>
+  </tr>`;
+}
+function pages() { return Math.max(1, Math.ceil(doc.slots.length / CONF.pageSize)); }
+function renderPager() {
+  const n = pages();
+  const html = n <= 1 ? "" : `<button data-p="0">«</button><button data-p="${page - 1}">‹</button>
+    <span>${page + 1} / ${n} ページ(${page * CONF.pageSize + 1}〜${Math.min(doc.slots.length, (page + 1) * CONF.pageSize)} 行)</span>
+    <button data-p="${page + 1}">›</button><button data-p="${n - 1}">»</button>`;
+  $("pagerTop").innerHTML = html; $("pagerBottom").innerHTML = html;
+}
+for (const id of ["pagerTop", "pagerBottom"]) {
+  $(id).addEventListener("click", (e) => {
+    const p = e.target.dataset?.p; if (p === undefined) return;
+    page = Math.min(pages() - 1, Math.max(0, +p)); renderSlots();
+  });
+}
+function renderSlots() {
+  page = Math.min(page, pages() - 1);
+  const le = K.littleEndian(doc.header);
+  const a = page * CONF.pageSize, b = Math.min(doc.slots.length, a + CONF.pageSize);
+  let html = "";
+  for (let i = a; i < b; i++) html += rowHtml(doc.slots[i], i, le);
+  $("slots").tBodies[0].innerHTML = html;
+  renderPager();
+}
+function replaceRow(tr, i) {
+  const t = document.createElement("tbody");
+  t.innerHTML = rowHtml(doc.slots[i], i, K.littleEndian(doc.header));
+  tr.replaceWith(t.firstElementChild);
+}
+const tbody = $("slots").tBodies[0];
+// イベント名の一覧は選ぶときに作る(行ごとに数百の選択肢を持たない)
+tbody.addEventListener("focusin", (e) => {
+  const t = e.target;
+  if (t.dataset?.lazy !== "1") return;
+  const s = doc.slots[+t.closest("tr").dataset.i];
+  t.innerHTML = eventOpts(K.getF(s.h, "class"), K.getF(s.h, "event"));
+  t.dataset.lazy = "0";
+});
+tbody.addEventListener("change", (e) => {
+  const t = e.target, tr = t.closest("tr"); if (!tr) return;
+  const i = +tr.dataset.i, s = doc.slots[i], f = t.dataset.f;
+  const le = K.littleEndian(doc.header);
+  try {
+    switch (f) {
+      case "on": s.on = t.checked; s.fresh = false; break;
+      case "struct": s.h = K.setF(s.h, "struct", +t.value); break;
+      case "cpu": s.h = K.setF(s.h, "cpu", K.parseField(t.value, "cpu")); break;
+      case "className": s.h = K.setF(s.h, "class", +t.value); break;
+      case "class": s.h = K.setF(s.h, "class", K.parseField(t.value, "class")); break;
+      case "eventName": s.h = K.setF(s.h, "event", +t.value); break;
+      case "event": s.h = K.setF(s.h, "event", K.parseField(t.value, "event")); break;
+      case "flags": s.h = K.setF(s.h, "flags", K.parseField(t.value, "flags", true)); break;
+      case "header": s.h = K.parseU32(t.value, true); break;
+      case "stamp": s.stamp = K.parseU32(t.value, true); break;
+      case "d1": s.d1 = K.parseU32(t.value); break;
+      case "d1x": s.d1 = K.parseU32(t.value, true); break;
+      case "d2": s.d2 = K.parseU32(t.value); break;
+      case "d2x": s.d2 = K.parseU32(t.value, true); break;
+      case "s1": {
+        const b = K.strToBytes(t.value, CONF.strBytes);
+        const [w1, w2] = K.bytesToWords(b, le);
+        s.d1 = w1;
+        if (b.length > CONF.wordBytes) s.d2 = w2; // 4 バイトを超えた分は payload[1] へ
+        break;
+      }
+      case "s2": s.d2 = K.bytesToWords(K.strToBytes(t.value, CONF.wordBytes), le)[0]; break;
+      default: return;
+    }
+    if (s.fresh) { s.fresh = false; s.on = true; } // 新規の空行は、触ったら有効にする
+    lastErr = null; opNote = null;
+    replaceRow(tr, i);
+    renderMsgs();
+  } catch (err) {
+    t.classList.add("bad"); t.title = err.message;
+    setErr(`スロット ${i + 1} 行: ${err.message}`);
+  }
+});
+tbody.addEventListener("click", (e) => {
+  const op = e.target.dataset?.op; if (!op) return;
+  const i = +e.target.closest("tr").dataset.i;
+  if (op === "ins") doc.slots.splice(i + 1, 0, K.newSlot(true));
+  else if (op === "dup") doc.slots.splice(i + 1, 0, { ...doc.slots[i], fresh: false });
+  else if (op === "del") doc.slots.splice(i, 1);
+  opNote = null;
+  renderSlots(); renderMsgs();
+});
+$("bAddRows").textContent = `${CONF.addRows} 行を追加`;
+$("bAddRows").onclick = () => {
+  for (let i = 0; i < CONF.addRows; i++) doc.slots.push(K.newSlot(true));
+  page = pages() - 1; renderSlots(); renderMsgs();
+};
+
+// ---- トレースバッファの補助
+function renderBuffers(ana) {
+  const bad = ana.bufs.filter((b) => b.issues.length);
+  const list = [...bad, ...ana.bufs.filter((b) => !b.issues.length)];
+  const shown = list.slice(0, CONF.maxBufferRows);
+  const cpus = [...new Set(ana.bufs.map((b) => b.cpu))].sort((a, b) => a - b);
+  let html = `<div class="muted">トレースバッファ ${ana.bufs.length} 個(CPU ${cpus.join(", ") || "なし"})・注意のあるトレースバッファ ${bad.length} 個。行を押すとそのスロットへ移動します</div>`;
+  html += ana.issues.map(([i, m]) => `<div class="warn jump" data-row="${i}" style="cursor:pointer">${esc(m)}</div>`).join("");
+  if (shown.length) {
+    html += `<div class="wrap"><table><thead><tr><th>CPU</th><th>通番</th><th>BUFFER のスロット数</th><th>実際</th><th>行</th><th>注意</th></tr></thead><tbody>`;
+    html += shown.map((b) => `<tr class="jump" data-row="${b.first}">
+      <td>${b.cpu}</td><td>${b.seq}</td><td>${b.declared}</td>
+      <td class="${b.closed && b.declared !== b.actual ? "bad" : ""}">${b.actual}</td>
+      <td>${b.first + 1}〜${b.last + 1}</td><td class="bad">${esc(b.issues.join("、"))}</td></tr>`).join("");
+    html += `</tbody></table></div>`;
+    if (list.length > shown.length) html += `<div class="muted">ほか ${list.length - shown.length} 個は省略</div>`;
+  }
+  $("bufInfo").innerHTML = html;
+}
+function jumpTo(i) {
+  page = Math.floor(i / CONF.pageSize);
+  renderSlots();
+  const tr = tbody.querySelector(`tr[data-i="${i}"]`);
+  if (tr) { tr.scrollIntoView({ block: "center" }); tr.classList.add("hit"); }
+}
+$("bufInfo").addEventListener("click", (e) => {
+  const el = e.target.closest("[data-row]");
+  if (el) jumpTo(+el.dataset.row);
+});
+$("bAddBuf").onclick = () => {
+  const r = K.addBuffer(doc.slots);
+  opNote = ["info", `CPU ${r.cpu} の通番 ${r.seq} のトレースバッファを ${r.at + 1}〜${r.at + 3} 行に追加しました。` +
+    "イベントは BUFFER と BUFFER_END の間に入れ(＋ボタンで挿入)、最後に「バッファ内スロット数修正」を押してください"];
+  lastErr = null; renderMsgs(); jumpTo(r.at);
+};
+$("bFix").onclick = () => {
+  const n = K.fixBufferCounts(doc.slots);
+  opNote = ["info", n ? `BUFFER のスロット数を ${n} 個直しました` : "直す BUFFER はありませんでした"];
+  lastErr = null; renderSlots(); renderMsgs();
+};
+
+// ---- 開く・保存
+function renderAll() { renderHeader(); renderSys(); renderSlots(); renderMsgs(); }
+async function openFile(f) {
+  try {
+    const isCsv = /\.csv$/i.test(f.name);
+    doc = isCsv ? K.fromCsv(await f.text()) : K.parseKev(new Uint8Array(await f.arrayBuffer()));
+    loadNotes = [["info", `${f.name} を読み込みました`], ...doc.notes];
+    $("fname").value = f.name.replace(/\.(kev|csv)$/i, "");
+    page = 0; lastErr = null; opNote = null; renderAll();
+  } catch (err) {
+    setErr(`${f.name}: ${err.message}`);
+  }
+}
+$("bOpen").onclick = () => $("file").click();
+$("file").onchange = (e) => { if (e.target.files[0]) openFile(e.target.files[0]); e.target.value = ""; };
+document.addEventListener("dragover", (e) => { e.preventDefault(); document.body.classList.add("drop"); });
+document.addEventListener("dragleave", () => document.body.classList.remove("drop"));
+document.addEventListener("drop", (e) => {
+  e.preventDefault(); document.body.classList.remove("drop");
+  if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]);
+});
+$("bNew").onclick = () => { doc = K.newDoc(); loadNotes = []; lastErr = null; opNote = null; page = 0; $("fname").value = "edited"; renderAll(); };
+function download(data, name, type) {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+$("bSaveKev").onclick = () => {
+  try { download(K.buildKev(doc), $("fname").value + ".kev", "application/octet-stream"); lastErr = null; renderMsgs(); }
+  catch (err) { setErr(err.message); }
+};
+$("bSaveCsv").onclick = () => {
+  // Excel で開けるように UTF-8 の BOM を付ける
+  try { download("﻿" + K.toCsv(doc), $("fname").value + ".csv", "text/csv"); lastErr = null; renderMsgs(); }
+  catch (err) { setErr(err.message); }
+};
+
+renderAll();
+</script>
+</body>
+</html>

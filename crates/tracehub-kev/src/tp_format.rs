@@ -933,6 +933,107 @@ fn scan_text(bytes: &[u8], out: &mut Vec<u8>) -> bool {
     true
 }
 
+// ---------------------------------------------------------------- 書式が使う語(試験用の kev を作るため)
+
+/// 書式が payloads のどの語を使うか
+#[derive(Debug, Clone, Default)]
+pub struct Usage {
+    /// label 付きの引数が読む最後の語
+    pub max_arg: Option<usize>,
+    /// 条件・テンプレートが無条件に読む語数(これより短いと traceprinter はスロットの外を読む)
+    pub min_required: usize,
+    /// 文字列が始まる語
+    pub str_words: std::collections::BTreeSet<usize>,
+    /// 値の名前の表で解釈される語
+    pub table_words: std::collections::BTreeSet<usize>,
+    /// NUL までの生バイトの文字列({rN})を含む
+    pub raw_str: bool,
+    /// dump() を含む
+    pub dump: bool,
+}
+
+impl Usage {
+    pub fn add(&mut self, items: &[Item]) {
+        let upd = |m: &mut Option<usize>, w: usize| *m = Some(m.map_or(w, |x| x.max(w)));
+        for it in items {
+            if !it.when.is_empty() {
+                for a in &Cond::parse(it.when).atoms {
+                    if !a.words {
+                        let w = if matches!(a.kind, Kind::Q | Kind::E) {
+                            a.word + 1
+                        } else {
+                            a.word
+                        };
+                        self.min_required = self.min_required.max(w + 1);
+                    }
+                }
+            }
+            match it.kind {
+                ItemKind::Arg { op, word, .. } => {
+                    let word = word as usize;
+                    let last = match op {
+                        Op::Q | Op::E => word + 1,
+                        Op::S(n) => word + (n as usize).saturating_sub(1),
+                        _ => word,
+                    };
+                    upd(&mut self.max_arg, last);
+                    if matches!(op, Op::S(_) | Op::SZ) {
+                        self.str_words.insert(word);
+                    }
+                }
+                ItemKind::Text(t) => {
+                    let mut max: Option<usize> = None;
+                    let mut has_str = false;
+                    for s in &Template::parse(t).segs {
+                        match s {
+                            Seg::Val { kind, word, .. }
+                            | Seg::Names { kind, word, .. }
+                            | Seg::Enum { kind, word, .. } => {
+                                if matches!(s, Seg::Names { .. } | Seg::Enum { .. }) {
+                                    self.table_words.insert(*word);
+                                }
+                                upd(
+                                    &mut max,
+                                    if matches!(kind, Kind::Q | Kind::E) {
+                                        word + 1
+                                    } else {
+                                        *word
+                                    },
+                                );
+                            }
+                            Seg::Str { kind, word, .. } => {
+                                has_str = true;
+                                self.raw_str |= matches!(kind, StrKind::Raw);
+                                if let Some(w) = word {
+                                    upd(&mut max, *w);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(m) = max {
+                        self.min_required = self.min_required.max(m + 1);
+                        if has_str {
+                            self.str_words.insert(m);
+                        }
+                    }
+                }
+                ItemKind::Flags { word, .. } => {
+                    self.min_required = self.min_required.max(word as usize + 1);
+                    self.table_words.insert(word as usize);
+                }
+                ItemKind::Dump => self.dump = true,
+            }
+        }
+    }
+
+    pub fn add_spec(&mut self, s: Spec) {
+        if let Spec::Items(i) = s {
+            self.add(i);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

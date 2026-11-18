@@ -212,7 +212,9 @@ pub const CONTROL_EVENTS: &[(u16, &str, EventId)] = &[
 ];
 
 /// INT のイベント(_TRACE_INT_*)
-pub const INT_EVENTS: &[(u16, &str, EventId)] = &[(7, "DELIVER", ids::int::DELIVER)];
+pub const INT_EVENTS: &[(u16, &str, EventId)] = &[
+    (7, "DELIVER", ids::int::DELIVER),
+];
 
 /// SYSTEM のイベント(_NTO_TRACE_SYS_*)。64 ビット版は BIT64 を足した番号
 pub const SYSTEM_EVENTS: &[(u16, &str, EventId)] = &[
