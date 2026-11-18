@@ -151,13 +151,13 @@ pub struct KevHeader {
     pub cycles_per_sec: u64,              // 無い・数値でなければ 0
     pub cpu_num: u32,                     // 同上
     pub syspage_len: u64,                 // 無い・空なら 0
-    pub keywords: Vec<(String, String)>,  // キー(TRACE_ と :: を除いた名前。例: VER_MAJOR)と値。kev に書かれた順
+    pub keywords: Vec<(String, String)>,  // キー(TRACE_ を含み :: を除いた名前。例: TRACE_VER_MAJOR)と値。kev に書かれた順
 }
 ```
 
 - keywords は kev に書かれた順で持つ。traceprinter 互換出力のヘッダの行は、この順に書く。
 - 同じキーが 2 回以上あれば、すべて持つ。`get()` は最後のものを返す。
-- 値は、traceprinter の表示と同じく、NUL の手前までの印字可能な ASCII(0x20〜0x7E)だけを残す(実測: traceprinter はそれ以外のバイトを表示しない)。取り除いたバイトがあれば警告(log)を出す。
+- 値は、traceprinter の表示と同じく、NUL の手前までの印字可能な ASCII(0x20〜0x7E)だけを残す(実測: traceprinter はそれ以外のバイトを表示しない)。
 - バイト順: リトルエンディアン(`TRACE_LITTLE_ENDIAN` がある kev)だけを読む。それ以外はエラー(§10)。
   - ビッグエンディアンの kev は traceprinter も読むが、同じ時刻の TIME と BUFFER の並びがリトルエンディアンのときと違う(TIME のスロット自身の時刻に、更新前の上位 32 ビットを使っているように見える。未確認)。QNX 8.0 の対象(x86_64・aarch64)はリトルエンディアンなので、扱わない。
 - fast / wide の区別は持たない。traceprinter は `TRACE_TRACELOGGER_ARGS` を見ず、イベントの構造で書式を選ぶ(§7.1)。
@@ -402,7 +402,7 @@ TRACEPARSER LIBRARY version 1.02
 ```
 
 - 改行は CRLF。
-- ヘッダの行: keywords を kev の順に `{TRACE_ + キー:>22}:: {値}` の形で書く。`HEADER_BEGIN` と `HEADER_END` は書かない。
+- ヘッダの行: keywords を kev の順に `{キー:>22}:: {値}` の形で書く。`TRACE_HEADER_BEGIN` と `TRACE_HEADER_END` は書かない。
 
 ### 9.2 イベントの行
 
@@ -434,7 +434,7 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 | `TRACE_HEADER_END::` が無い | エラー | 内部エラー 17 |
 | `TRACE_VER_MAJOR` / `TRACE_VER_MINOR` が無い(値は問わない) | エラー | 内部エラー 13 |
 | `TRACE_LITTLE_ENDIAN` が無い(`TRACE_BIG_ENDIAN` だけ、またはどちらも無い) | エラー | `TRACE_BIG_ENDIAN` だけなら読む。どちらも無ければ内部エラー 11 |
-| ヘッダの値に NUL・印字可能な ASCII 以外のバイトがある | 取り除いて読み、警告(log)を出す | NUL の手前まで、印字可能な ASCII だけを表示する |
+| ヘッダの値に NUL・印字可能な ASCII 以外のバイトがある | 取り除いて読む | NUL の手前まで、印字可能な ASCII だけを表示する |
 | ヘッダの項目(キー::値)が 2048 バイト以上 | エラー | 内部エラー 17 |
 | `TRACE_SYSPAGE_LEN` の分のバイトが無い | エラー | 内部エラー 12 |
 | `TRACE_SYSPAGE_LEN` が無い・空 | 0 とする | 読む |
@@ -462,7 +462,8 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 
 - 依存は `log` クレートだけ(ライブラリと CLI)。CLI の引数は自分で解析する。
 - ライブラリは直接何も出力しない。イベント部の異常は DiagInfo で返す。
-- エラーにも DiagInfo にもならない、知らせたいこと(`TRACE_SYS_RELEASE` が無いので 8.0 として読んだ、など)は `log::warn!` で出す。出力先は使う側が決める(CLI は標準エラーに `警告: …` と書く)。
+- エラーにも DiagInfo にもならない、知らせたいこと(`TRACE_SYS_RELEASE` が無いので 8.0 として読んだ、など)は `log::warn!` で出す。出力先は使う側が決める(CLI は標準エラーに `warning: …` と書く)。
+- エラーと警告の文面は英語にする。
 
 ---
 

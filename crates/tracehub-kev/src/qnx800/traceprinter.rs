@@ -22,8 +22,7 @@ pub(crate) fn write(kev: &KevFile, out: &mut impl Write) -> io::Result<()> {
         if args::HEADER_SKIP.contains(&k.as_str()) {
             continue;
         }
-        let key = format!("{}{k}", args::HEADER_KEY_PREFIX);
-        let line = format!("{key:>w$}:: {v}", w = args::HEADER_KEY_WIDTH);
+        let line = format!("{k:>w$}:: {v}", w = args::HEADER_KEY_WIDTH);
         out.write_all(&latin1(&line))?;
         out.write_all(le)?;
     }

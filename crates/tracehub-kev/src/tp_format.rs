@@ -386,11 +386,11 @@ fn parse_ref(s: &str) -> (Kind, usize) {
     let k = ch
         .next()
         .and_then(parse_kind)
-        .unwrap_or_else(|| panic!("値の参照が不正です: {s}"));
+        .unwrap_or_else(|| panic!("invalid value reference: {s}"));
     let w = ch
         .as_str()
         .parse()
-        .unwrap_or_else(|_| panic!("語の番号が不正です: {s}"));
+        .unwrap_or_else(|_| panic!("invalid word number: {s}"));
     (k, w)
 }
 
@@ -400,7 +400,7 @@ fn parse_num(s: &str) -> u64 {
         Some(h) => u64::from_str_radix(h, 16),
         None => s.parse(),
     }
-    .unwrap_or_else(|_| panic!("数値が不正です: {s}"))
+    .unwrap_or_else(|_| panic!("invalid number: {s}"))
 }
 
 fn parse_fmt(s: &str) -> Fmt {
@@ -415,7 +415,7 @@ fn parse_fmt(s: &str) -> Fmt {
         rest = &rest[1..];
     }
     if !rest.is_empty() {
-        f.width = rest.parse().unwrap_or_else(|_| panic!("幅の指定が不正です: {s}"));
+        f.width = rest.parse().unwrap_or_else(|_| panic!("invalid width: {s}"));
     }
     f
 }
@@ -430,7 +430,7 @@ impl Template {
                 lit.push(c);
                 rest = &rest[2..];
             } else if c == '{' {
-                let end = rest.find('}').unwrap_or_else(|| panic!("閉じ括弧がありません: {src}"));
+                let end = rest.find('}').unwrap_or_else(|| panic!("missing closing brace: {src}"));
                 if !lit.is_empty() {
                     segs.push(Seg::Lit(std::mem::take(&mut lit)));
                 }
@@ -471,7 +471,7 @@ impl Template {
         if matches!(body, "code" | "num" | "call" | "name") {
             return Seg::Var { name: body.into(), fmt };
         }
-        let first = body.chars().next().expect("空の {}");
+        let first = body.chars().next().expect("empty {}");
         match first {
             's' | 'z' | 'r' => {
                 let kind = match first {
@@ -481,7 +481,7 @@ impl Template {
                 };
                 let rest = &body[1..];
                 let word =
-                    (rest != "next").then(|| rest.parse().unwrap_or_else(|_| panic!("語の番号が不正です: {body}")));
+                    (rest != "next").then(|| rest.parse().unwrap_or_else(|_| panic!("invalid word number: {body}")));
                 Seg::Str {
                     kind,
                     word,
@@ -687,7 +687,7 @@ impl Ctx<'_> {
         self.tables
             .get(name)
             .copied()
-            .unwrap_or_else(|| panic!("表 {name} がありません"))
+            .unwrap_or_else(|| panic!("no table named {name}"))
     }
 }
 

@@ -5,7 +5,7 @@
 use std::io::BufWriter;
 use std::process::ExitCode;
 
-const USAGE: &str = "使い方: tracehub traceprinter <kev ファイル> <出力ファイル>";
+const USAGE: &str = "usage: tracehub traceprinter <KEV_FILE> <OUTPUT_FILE>";
 
 /// ライブラリの警告などを標準エラーに書く
 struct StderrLogger;
@@ -17,8 +17,8 @@ impl log::Log for StderrLogger {
     fn log(&self, r: &log::Record) {
         if self.enabled(r.metadata()) {
             let level = match r.level() {
-                log::Level::Error => "エラー",
-                _ => "警告",
+                log::Level::Error => "error",
+                _ => "warning",
             };
             eprintln!("{level}: {}", r.args());
         }
@@ -46,9 +46,9 @@ fn main() -> ExitCode {
 
 /// traceprinter 互換出力(traceprinter -n と同じ)
 fn traceprinter(input: &str, output: &str) -> Result<(), String> {
-    let bytes = std::fs::read(input).map_err(|e| format!("{input} を読めません: {e}"))?;
+    let bytes = std::fs::read(input).map_err(|e| format!("cannot read {input}: {e}"))?;
     let kev = tracehub_kev::parse(&bytes).map_err(|e| format!("{input}: {e}"))?;
-    let file = std::fs::File::create(output).map_err(|e| format!("{output} を作れません: {e}"))?;
+    let file = std::fs::File::create(output).map_err(|e| format!("cannot create {output}: {e}"))?;
     let mut out = BufWriter::new(file);
-    tracehub_kev::traceprinter::write(&kev, &mut out).map_err(|e| format!("{output} に書けません: {e}"))
+    tracehub_kev::traceprinter::write(&kev, &mut out).map_err(|e| format!("cannot write {output}: {e}"))
 }

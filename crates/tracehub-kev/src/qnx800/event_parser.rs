@@ -591,7 +591,7 @@ mod tests {
             DiagKind::MissingBufferEnd { seq: 3 },
             DiagKind::OutsideBuffer { slots: 1 },
         ] {
-            assert!(kinds.contains(&k), "{k:?} が無い: {kinds:?}");
+            assert!(kinds.contains(&k), "{k:?} not found: {kinds:?}");
         }
     }
 

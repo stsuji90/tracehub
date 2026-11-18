@@ -12,10 +12,8 @@ pub const LINE_END: &str = "\r\n";
 pub const BANNER: &[&str] = &["TRACEPRINTER version 1.02", "TRACEPARSER LIBRARY version 1.02"];
 pub const HEADER_TITLE: &str = " -- HEADER FILE INFORMATION -- ";
 pub const EVENTS_TITLE: &str = " -- KERNEL EVENTS -- ";
-/// ヘッダの行のキーの前に付ける文字列(KevHeader のキーは TRACE_ を含まない)
-pub const HEADER_KEY_PREFIX: &str = "TRACE_";
-/// ヘッダの行に書かないキー(TRACE_ を除いた名前)
-pub const HEADER_SKIP: &[&str] = &["HEADER_BEGIN", "HEADER_END"];
+/// ヘッダの行に書かないキー
+pub const HEADER_SKIP: &[&str] = &["TRACE_HEADER_BEGIN", "TRACE_HEADER_END"];
 /// ヘッダの行: "%22s:: %s"
 pub const HEADER_KEY_WIDTH: usize = 22;
 /// イベントの行: "t:0x%08x CPU:%02d %-16s:%-18s<args>"

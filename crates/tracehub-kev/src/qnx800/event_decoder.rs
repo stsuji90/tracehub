@@ -79,7 +79,7 @@ fn literal(s: &'static str) -> Template {
 }
 
 fn build() -> Spec800 {
-    let cls = |n: &str| class_code(n).unwrap_or_else(|| panic!("args.rs: 内部クラス {n} がありません"));
+    let cls = |n: &str| class_code(n).unwrap_or_else(|| panic!("args.rs: unknown internal class {n}"));
     let names = |c: &str, e: &str| args::EVENT_NAMES.iter().find(|r| r.0 == c && r.1 == e).map(|r| r.2);
     let names64 = |c: &str, e: &str| args::EVENT_NAMES_64.iter().find(|r| r.0 == c && r.1 == e).map(|r| r.2);
 
@@ -101,17 +101,17 @@ fn build() -> Spec800 {
             intcall: e.intcall,
         };
         if e.event == "*" {
-            let name = Template::parse(e.name.expect("args.rs: * には name が要ります"));
+            let name = Template::parse(e.name.expect("args.rs: an event \"*\" needs a name"));
             assert!(
                 wildcard.insert(c, compiled(name)).is_none(),
-                "args.rs: {} * が重複",
+                "args.rs: duplicate \"*\" for {}",
                 e.class
             );
             continue;
         }
         let code = event_code(c, e.event, e.kind, e.is64).unwrap_or_else(|| {
             panic!(
-                "args.rs: {} {} {} {} が def.rs にありません",
+                "args.rs: {} {} {} {} is not in def.rs",
                 e.class, e.event, e.kind, e.is64
             )
         });
@@ -129,7 +129,7 @@ fn build() -> Spec800 {
         };
         assert!(
             events.insert((c, code), compiled(name)).is_none(),
-            "args.rs: {} {} の定義が重複",
+            "args.rs: duplicate definition of {} {}",
             e.class,
             e.event
         );
@@ -139,7 +139,7 @@ fn build() -> Spec800 {
         def::KERCALLS
             .iter()
             .find(|r| r.1 == n)
-            .unwrap_or_else(|| panic!("args.rs: コール {n}"))
+            .unwrap_or_else(|| panic!("args.rs: unknown kernel call {n}"))
             .0
     };
     let mut kc_names: HashMap<u16, &'static str> = def::KERCALLS.iter().map(|r| (r.0, r.1)).collect();
@@ -151,7 +151,7 @@ fn build() -> Spec800 {
         def::THREAD_STATES
             .iter()
             .find(|r| r.1 == n)
-            .unwrap_or_else(|| panic!("args.rs: 状態 {n}"))
+            .unwrap_or_else(|| panic!("args.rs: unknown thread state {n}"))
             .0
     };
 

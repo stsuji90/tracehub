@@ -45,7 +45,7 @@ pub struct KevHeader {
     pub cpu_num: u32,
     /// `TRACE_SYSPAGE_LEN`(無い・空なら 0)
     pub syspage_len: u64,
-    /// キー(`TRACE_` と `::` を除いた名前。例: "VER_MAJOR")と値。kev に書かれた順。同じキーが複数あればすべて持つ。
+    /// キー(`TRACE_` を含み `::` を除いた名前。例: "TRACE_VER_MAJOR")と値。kev に書かれた順。同じキーが複数あればすべて持つ。
     /// 値は traceprinter と同じく、NUL の手前までの印字可能な ASCII(0x20〜0x7E)だけを残したもの
     pub keywords: Vec<(String, String)>,
 }
@@ -191,19 +191,19 @@ pub enum KevError {
 impl std::fmt::Display for KevError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            KevError::NoHeaderEnd => write!(f, "ヘッダの終わり(TRACE_HEADER_END::)がありません"),
-            KevError::MissingKey { key } => write!(f, "ヘッダに {key} がありません"),
+            KevError::NoHeaderEnd => write!(f, "the header has no end (TRACE_HEADER_END::)"),
+            KevError::MissingKey { key } => write!(f, "the header has no {key}"),
             KevError::NotLittleEndian => {
                 write!(
                     f,
-                    "リトルエンディアンの kev(ヘッダに TRACE_LITTLE_ENDIAN があるもの)だけを読めます"
+                    "only little-endian kev files (with TRACE_LITTLE_ENDIAN in the header) are supported"
                 )
             }
-            KevError::HeaderItemTooLong { key, len } => write!(f, "ヘッダの項目 {key} が長すぎます({len} バイト)"),
+            KevError::HeaderItemTooLong { key, len } => write!(f, "the header item {key} is too long ({len} bytes)"),
             KevError::SyspageTooShort { expected, actual } => {
-                write!(f, "syspage が足りません({expected} バイトのはずが {actual} バイト)")
+                write!(f, "the syspage is too short ({actual} bytes, expected {expected})")
             }
-            KevError::UnsupportedVersion { release } => write!(f, "対応していない QNX の版です: {release}"),
+            KevError::UnsupportedVersion { release } => write!(f, "unsupported QNX version: {release}"),
         }
     }
 }
