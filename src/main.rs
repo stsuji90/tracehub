@@ -47,8 +47,8 @@ fn main() -> ExitCode {
 /// traceprinter 互換出力(traceprinter -n と同じ)
 fn traceprinter(input: &str, output: &str) -> Result<(), String> {
     let bytes = std::fs::read(input).map_err(|e| format!("{input} を読めません: {e}"))?;
-    let kev = tracehub_kev::parse(&bytes).map_err(|e| format!("{input}: {e}"))?;
+    let kev = tracehub_format_kev::parse(&bytes).map_err(|e| format!("{input}: {e}"))?;
     let file = std::fs::File::create(output).map_err(|e| format!("{output} を作れません: {e}"))?;
     let mut out = BufWriter::new(file);
-    tracehub_kev::traceprinter::write(&kev, &mut out).map_err(|e| format!("{output} に書けません: {e}"))
+    tracehub_format_kev::traceprinter::write(&kev, &mut out).map_err(|e| format!("{output} に書けません: {e}"))
 }

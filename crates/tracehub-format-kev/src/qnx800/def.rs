@@ -1,6 +1,6 @@
 //! QNX 8.0 の内部 ID の定義。
 //!
-//! 生成ファイル(tools/gen_qnx_def.py)。手で編集しない。
+//! 生成ファイル(tests/kev/tools/gen_qnx_def.py)。手で編集しない。
 //! 入力: SDP のヘッダ(sys/trace.h、sys/kercalls.h、sys/states.h、sys/nto_version.h)と TableOfEvents。
 
 use crate::ids::{self, EventId};

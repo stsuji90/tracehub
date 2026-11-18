@@ -1,6 +1,6 @@
 # QNX の版の定義をそろえる手順
 
-tracehub-kev に QNX の新しい版を足す(または今の版の定義を直す)ための作業の手順。
+tracehub-format-kev に QNX の新しい版を足す(または今の版の定義を直す)ための作業の手順。
 作業する人(AI を含む)が、この文書と設計書(design.md)だけで進められることを目標にしている。
 版に固有の値はここに書かない。値は必ず、その版の資料と traceprinter の出力から決める。
 
@@ -25,10 +25,10 @@ tracehub-kev に QNX の新しい版を足す(または今の版の定義を直�
 ## 2. def.rs を作る
 
 ```
-python tools/gen_qnx_def.py --sdp inputs/sdp-headers --table inputs/docs/TableOfEvents.txt
+python tests/kev/tools/gen_qnx_def.py --sdp inputs/sdp-headers --table inputs/docs/TableOfEvents.txt
 ```
 
-- 版はヘッダの `_NTO_VERSION` から決まり、`crates/tracehub-kev/src/qnx<版>/def.rs` に書かれる(例: 800 → `qnx800`)。
+- 版はヘッダの `_NTO_VERSION` から決まり、`crates/tracehub-format-kev/src/qnx<版>/def.rs` に書かれる(例: 800 → `qnx800`)。
 - def.rs は ids.rs の定数を名前で参照する。**ビルドで「ids::xxx::NAME が無い」と出たら、ids.rs の該当モジュールの末尾に定数を足す**(番号はそのモジュールの最大 + 1)。
 - 前の版の def.rs と差分をとり、変わった点(番号の付け替え、名前の追加・削除、ビット配置)を把握する。名前が同じで意味が変わったものがあれば、ids.rs に新しい ID を足すかを判断する(意味が同じなら同じ ID)。
 - ヘッダの書き方が変わって生成スクリプトが値を取れないときは、スクリプトを直す(ヘッダの定義名で引く。値を書き込まない)。
@@ -82,7 +82,7 @@ TableOfEvents のブロック(`Class:`・`Event:`・`Fast:`・`Wide:`)を、`ev(
 ## 5. traceprinter と比べて直す
 
 ```
-python tools/compare.py --traceprinter <traceprinter の場所>
+python tests/kev/tools/compare.py --traceprinter <traceprinter の場所>
 ```
 
 - 生成器(`qnx<版>/scenarios.rs`)は args.rs と def.rs の全イベントについて、語数・文字列・値の名前を変えた変種を作る。kevcsv.py で kev にして、traceprinter と tracehub の出力をバイト単位で比べる。
@@ -102,8 +102,8 @@ python tools/compare.py --traceprinter <traceprinter の場所>
 
 ## 6. 仕上げ
 
-1. `cargo fmt`、`cargo clippy --all-targets`、`cargo test` が通る。
-2. `python tools/gen_qnx_def.py ... --check` で def.rs が生成結果と同じ。
-3. `python tools/compare.py` がすべて一致する。
+1. `cargo fmt --all`、`cargo clippy --workspace --all-targets`、`cargo test --workspace` が通る。
+2. `python tests/kev/tools/gen_qnx_def.py ... --check` で def.rs が生成結果と同じ。
+3. `python tests/kev/tools/compare.py` がすべて一致する。
 4. 実機で取った kev(fast と wide)を `--kev-dir` で比べ、すべて一致する。
 5. 設計書の「版に依存する部分」に変わったことがあれば書き足す。

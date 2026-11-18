@@ -1,9 +1,9 @@
 """QNX SDP のヘッダと TableOfEvents から、版ごとの def.rs(内部 ID の定義)を生成する。
 
-    python tools/gen_qnx_def.py --sdp <SDP の include ディレクトリ> --table <TableOfEvents.txt> [--out <def.rs>] [--check]
+    python tests/kev/tools/gen_qnx_def.py --sdp <SDP の include ディレクトリ> --table <TableOfEvents.txt> [--out <def.rs>] [--check]
 
 --sdp     sys/trace.h・sys/kercalls.h・sys/states.h・sys/nto_version.h を含むディレクトリ
---out     省略時は crates/tracehub-kev/src/qnx<版>/def.rs(版は _NTO_VERSION から決める。800 → qnx800)
+--out     省略時は crates/tracehub-format-kev/src/qnx<版>/def.rs(版は _NTO_VERSION から決める。800 → qnx800)
 --check   書き込まずに、置いてあるファイルが生成結果と同じかを確かめる(違えば終了コード 1)
 
 def.rs に書くもの:
@@ -11,7 +11,7 @@ def.rs に書くもの:
   - 内部クラス ID、CONTROL のイベント番号と payloads の位置、cookie
   - KER_CALL のイベント番号の作り(コール番号のマスク、exit / int / 64 ビットのビット)
   - クラスごとの (内部イベント番号, 名前, セマンティック ID) の表
-セマンティック ID は crates/tracehub-kev/src/ids.rs の定数を名前で参照する。
+セマンティック ID は crates/tracehub-format-kev/src/ids.rs の定数を名前で参照する。
 ids.rs に無い名前があると def.rs がビルドできないので、ids.rs に追加する(番号は追加だけ)。
 """
 
@@ -22,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 HEADERS = ["sys/trace.h", "sys/kercalls.h", "sys/states.h", "sys/nto_version.h"]
 
 
@@ -156,7 +156,7 @@ def main() -> int:
     table = a.table.read_text(encoding="utf-8", errors="replace")
     ver = H.value("_NTO_VERSION")
     module = f"qnx{ver}"
-    out_path = a.out or ROOT / "crates" / "tracehub-kev" / "src" / module / "def.rs"
+    out_path = a.out or ROOT / "crates" / "tracehub-format-kev" / "src" / module / "def.rs"
 
     ev_mask, ev_shift = mask_shift(H.func["_NTO_TRACE_GETEVENT"])
     cl_mask, cl_shift = mask_shift(H.func["_NTO_TRACE_GETEVENT_C"])
@@ -192,7 +192,7 @@ def main() -> int:
     out = [
         f"//! QNX {ver // 100}.{ver % 100 // 10} の内部 ID の定義。",
         "//!",
-        "//! 生成ファイル(tools/gen_qnx_def.py)。手で編集しない。",
+        "//! 生成ファイル(tests/kev/tools/gen_qnx_def.py)。手で編集しない。",
         "//! 入力: SDP のヘッダ(" + "、".join(HEADERS) + ")と TableOfEvents。",
         "",
         "use crate::ids::{self, EventId};",

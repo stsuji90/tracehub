@@ -1,10 +1,10 @@
 """traceprinter と tracehub の出力をバイト単位で比べる。
 
-    python tools/compare.py [--traceprinter PATH] [--kev-dir DIR ...] [--work DIR]
+    python tests/kev/tools/compare.py [--traceprinter PATH] [--kev-dir DIR ...] [--work DIR]
 
 比べるもの:
-  1. 合成データ: 生成器(cargo run --example scenarios)の CSV と tests/data/*.csv を
-     tools/kevedit/kevcsv.py で kev にしたもの
+  1. 合成データ: 生成器(cargo run --example scenarios)の CSV と tests/kev/data/*.csv を
+     tests/kev/tools/kevedit/kevcsv.py で kev にしたもの
   2. --kev-dir の *.kev(実機で取った kev など。リポジトリには入れない)
 
 --traceprinter  省略時は環境変数 TRACEHUB_TRACEPRINTER
@@ -24,7 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
+TOOLS = Path(__file__).resolve().parent
 ACCESS_VIOLATION = 0xC0000005
 
 
@@ -63,7 +64,7 @@ def main() -> int:
         return 2
     kev_dirs = a.kev_dir or [Path(p) for p in os.environ.get("TRACEHUB_KEV_DIR", "").split(";") if p]
 
-    r = run(["cargo", "build", "--release", "-q", "-p", "tracehub-cli"], cwd=ROOT)
+    r = run(["cargo", "build", "--release", "-q", "-p", "tracehub"], cwd=ROOT)
     if r.returncode != 0:
         print(r.stderr.decode(errors="replace"), file=sys.stderr)
         return 1
@@ -75,16 +76,16 @@ def main() -> int:
     csv_dir, kev_dir, out_dir = work / "csv", work / "kev", work / "out"
     for d in (csv_dir, kev_dir, out_dir):
         d.mkdir(parents=True)
-    r = run(["cargo", "run", "--release", "-q", "-p", "tracehub-kev", "--example", "scenarios", "--", csv_dir], cwd=ROOT)
+    r = run(["cargo", "run", "--release", "-q", "-p", "tracehub-format-kev", "--example", "scenarios", "--", csv_dir], cwd=ROOT)
     if r.returncode != 0:
         print(r.stderr.decode(errors="replace"), file=sys.stderr)
         return 1
-    for f in (ROOT / "tests" / "data").glob("*.csv"):
+    for f in (ROOT / "tests" / "kev" / "data").glob("*.csv"):
         shutil.copy(f, csv_dir / f.name)
     kevs = []
     for f in sorted(csv_dir.glob("*.csv")):
         k = kev_dir / (f.stem + ".kev")
-        r = run([sys.executable, ROOT / "tools" / "kevedit" / "kevcsv.py", "csv2kev", f, "-o", k])
+        r = run([sys.executable, TOOLS / "kevedit" / "kevcsv.py", "csv2kev", f, "-o", k])
         if not k.exists():
             print(f"{f.name}: kev にできません\n{r.stderr.decode(errors='replace')}", file=sys.stderr)
             return 1

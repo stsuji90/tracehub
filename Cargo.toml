@@ -1,5 +1,19 @@
+[package]
+name = "tracehub"
+description = "トレースを読み、分析しやすい形式に変換して出力するコマンド"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "tracehub"
+path = "src/main.rs"
+
+[dependencies]
+tracehub-format-kev = { path = "crates/tracehub-format-kev" }
+log = "0.4"
+
 [workspace]
-members = ["crates/tracehub-kev", "crates/tracehub-cli"]
+members = ["crates/tracehub-format-kev"]
 resolver = "3"
 
 [workspace.package]

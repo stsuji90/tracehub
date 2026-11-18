@@ -51,9 +51,11 @@ kev の解釈は公式に公開されていない。tracehub の解釈は、trac
 
 ```
 tracehub/
-  Cargo.toml                   ワークスペース
+  Cargo.toml                   tracehub コマンドのパッケージとワークスペース
+  src/
+    main.rs                    CLI(tracehub コマンド)
   crates/
-    tracehub-kev/              kev に関するすべての処理(ライブラリ)
+    tracehub-format-kev/       kev に関するすべての処理(ライブラリ)
       src/
         lib.rs                 公開 API
         model.rs               KevFile・TraceEvent・DiagInfo などの型
@@ -70,16 +72,19 @@ tracehub/
           traceprinter.rs      traceprinter 互換出力(§9)
           scenarios.rs         試験用の合成データの生成(§14)
       examples/scenarios.rs    合成データを CSV で書く
-    tracehub-cli/              CLI(tracehub コマンド)
-  tools/
-    gen_qnx_def.py             SDP のヘッダと TableOfEvents から def.rs を生成する
-    compare.py                 traceprinter と tracehub の出力を比べる
-    kevedit/                   試験用の kev を CSV から作る道具(kevedit.html、kevcsv.py、CSV_FORMAT.md)
-  tests/data/                  試験用の合成データ(小さな場面の CSV)
+  tests/
+    kev/                       kev 用の道具と試験データ(形式ごとにディレクトリを分ける)
+      tools/
+        gen_qnx_def.py         SDP のヘッダと TableOfEvents から def.rs を生成する
+        compare.py             traceprinter と tracehub の出力を比べる
+        kevedit/               試験用の kev を CSV から作る道具(kevedit.html、kevcsv.py、CSV_FORMAT.md)
+      data/                    試験用の合成データ(小さな場面の CSV)
   docs/
     design.md                  この文書
     qnx-version-guide.md       QNX の版の定義をそろえる手順(別の作業者向け)
 ```
+
+- 形式ごとのライブラリは `crates/tracehub-format-<形式>`、その道具と試験データは `tests/<形式>/` に置く。
 
 ### 版に依存する部分と依存しない部分
 
@@ -440,7 +445,7 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 | ファイル | 作り方 | 内容 |
 |---|---|---|
 | ids.rs | 手で保守(番号は追加だけ) | セマンティック ID |
-| qnxNNN/def.rs | tools/gen_qnx_def.py で生成(手で編集しない) | header のビット配置、内部クラス ID、CONTROL のイベント番号と payloads の位置、KER_CALL のビット、クラスごとの (内部イベント番号, 名前, セマンティック ID) |
+| qnxNNN/def.rs | tests/kev/tools/gen_qnx_def.py で生成(手で編集しない) | header のビット配置、内部クラス ID、CONTROL のイベント番号と payloads の位置、KER_CALL のビット、クラスごとの (内部イベント番号, 名前, セマンティック ID) |
 | qnxNNN/args.rs | AI が作り、traceprinter の出力で確かめる | 出力の枠、診断の行、表示名、書式、出力しない条件 |
 
 - 入力は QNX の公開資料(SDP のヘッダ、TableOfEvents)と traceprinter の出力。
@@ -472,9 +477,9 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 
 | 種類 | 内容 | 実行 |
 |---|---|---|
-| 単体試験 | ヘッダ・merge・combine・CONTROL の点検・書式・セマンティック ID・合成データの枠 | `cargo test` |
-| 合成データ | 生成器(全イベントの網羅、語が足りないイベント、窓、ORPHAN の位置、4 CPU の一周)と tests/data の小さな場面を、kevcsv.py で kev にして traceprinter の出力とバイト単位で比べる | `python tools/compare.py` |
-| 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取って同じく比べる。仕上げとして最後に行う | `python tools/compare.py --kev-dir <DIR>` |
+| 単体試験 | ヘッダ・merge・combine・CONTROL の点検・書式・セマンティック ID・合成データの枠 | `cargo test --workspace` |
+| 合成データ | 生成器(全イベントの網羅、語が足りないイベント、窓、ORPHAN の位置、4 CPU の一周)と tests/kev/data の小さな場面を、kevcsv.py で kev にして traceprinter の出力とバイト単位で比べる | `python tests/kev/tools/compare.py` |
+| 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取って同じく比べる。仕上げとして最後に行う | `python tests/kev/tools/compare.py --kev-dir <DIR>` |
 
 - traceprinter の場所は `--traceprinter` か環境変数 `TRACEHUB_TRACEPRINTER`、実機の kev の置き場所は `--kev-dir` か `TRACEHUB_KEV_DIR`。
 - 実機で取りにくいイベントは、合成データで確かめる。

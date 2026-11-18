@@ -9,15 +9,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
-name = "tracehub-cli"
+name = "tracehub"
 version = "0.1.0"
 dependencies = [
  "log",
- "tracehub-kev",
+ "tracehub-format-kev",
 ]
 
 [[package]]
-name = "tracehub-kev"
+name = "tracehub-format-kev"
 version = "0.1.0"
 dependencies = [
  "log",
