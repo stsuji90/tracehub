@@ -13,11 +13,11 @@ name = "tracehub"
 version = "0.1.0"
 dependencies = [
  "log",
- "tracehub-format-kev",
+ "tracehub-kev",
 ]
 
 [[package]]
-name = "tracehub-format-kev"
+name = "tracehub-kev"
 version = "0.1.0"
 dependencies = [
  "log",

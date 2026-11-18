@@ -76,7 +76,7 @@ def main() -> int:
     csv_dir, kev_dir, out_dir = work / "csv", work / "kev", work / "out"
     for d in (csv_dir, kev_dir, out_dir):
         d.mkdir(parents=True)
-    r = run(["cargo", "run", "--release", "-q", "-p", "tracehub-format-kev", "--example", "scenarios", "--", csv_dir], cwd=ROOT)
+    r = run(["cargo", "run", "--release", "-q", "-p", "tracehub-kev", "--example", "scenarios", "--", csv_dir], cwd=ROOT)
     if r.returncode != 0:
         print(r.stderr.decode(errors="replace"), file=sys.stderr)
         return 1

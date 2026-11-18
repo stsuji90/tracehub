@@ -51,11 +51,11 @@ kev の解釈は公式に公開されていない。tracehub の解釈は、trac
 
 ```
 tracehub/
-  Cargo.toml                   tracehub コマンドのパッケージとワークスペース
-  src/
-    main.rs                    CLI(tracehub コマンド)
+  Cargo.toml                   ワークスペース(パッケージを持たない)
+  apps/
+    tracehub/src/main.rs       CLI(tracehub コマンド)
   crates/
-    tracehub-format-kev/       kev に関するすべての処理(ライブラリ)
+    tracehub-kev/              kev に関するすべての処理(ライブラリ)
       src/
         lib.rs                 公開 API
         model.rs               KevFile・TraceEvent・DiagInfo などの型
@@ -84,7 +84,8 @@ tracehub/
     qnx-version-guide.md       QNX の版の定義をそろえる手順(別の作業者向け)
 ```
 
-- 形式ごとのライブラリは `crates/tracehub-format-<形式>`、その道具と試験データは `tests/<形式>/` に置く。
+- 実行ファイル(CLI、将来の GUI)は `apps/`、ライブラリは `crates/` に置く。
+- トレースの形式ごとのライブラリは `crates/tracehub-<形式>`、その道具と試験データは `tests/<形式>/` に置く。
 
 ### 版に依存する部分と依存しない部分
 
@@ -477,7 +478,7 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 
 | 種類 | 内容 | 実行 |
 |---|---|---|
-| 単体試験 | ヘッダ・merge・combine・CONTROL の点検・書式・セマンティック ID・合成データの枠 | `cargo test --workspace` |
+| 単体試験 | ヘッダ・merge・combine・CONTROL の点検・書式・セマンティック ID・合成データの枠 | `cargo test` |
 | 合成データ | 生成器(全イベントの網羅、語が足りないイベント、窓、ORPHAN の位置、4 CPU の一周)と tests/kev/data の小さな場面を、kevcsv.py で kev にして traceprinter の出力とバイト単位で比べる | `python tests/kev/tools/compare.py` |
 | 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取って同じく比べる。仕上げとして最後に行う | `python tests/kev/tools/compare.py --kev-dir <DIR>` |
 
