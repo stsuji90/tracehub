@@ -181,8 +181,8 @@ pub enum TruncateReason {
 pub enum KevError {
     /// `TRACE_HEADER_END::` が無い
     NoHeaderEnd,
-    /// `TRACE_VER_MAJOR` / `TRACE_VER_MINOR` が無い、または対応していない値
-    BadFormatVersion { key: String, value: Option<String> },
+    /// `TRACE_VER_MAJOR` / `TRACE_VER_MINOR` が無い
+    MissingKey { key: String },
     /// ヘッダの項目(キー::値)が長すぎる
     HeaderItemTooLong { key: String, len: usize },
     /// `TRACE_SYSPAGE_LEN` の分のバイトが無い
@@ -195,8 +195,7 @@ impl std::fmt::Display for KevError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             KevError::NoHeaderEnd => write!(f, "ヘッダの終わり(TRACE_HEADER_END::)がありません"),
-            KevError::BadFormatVersion { key, value: None } => write!(f, "ヘッダに {key} がありません"),
-            KevError::BadFormatVersion { key, value: Some(v) } => write!(f, "{key} が対応していない値です: {v}"),
+            KevError::MissingKey { key } => write!(f, "ヘッダに {key} がありません"),
             KevError::HeaderItemTooLong { key, len } => write!(f, "ヘッダの項目 {key} が長すぎます({len} バイト)"),
             KevError::SyspageTooShort { expected, actual } => {
                 write!(f, "syspage が足りません({expected} バイトのはずが {actual} バイト)")

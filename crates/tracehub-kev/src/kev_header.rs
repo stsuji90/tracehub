@@ -17,9 +17,6 @@ const KEY_CYCLES_PER_SEC: &str = "TRACE_CYCLES_PER_SEC";
 const KEY_CPU_NUM: &str = "TRACE_CPU_NUM";
 const KEY_SYSPAGE_LEN: &str = "TRACE_SYSPAGE_LEN";
 const KEY_SYS_RELEASE: &str = "TRACE_SYS_RELEASE";
-/// traceprinter が読む kev 形式の版
-const VER_MAJOR: &str = "2";
-const VER_MINOR: &str = "01";
 /// traceprinter が読めない、ヘッダの項目(キー::値)の長さ
 const ITEM_LEN_LIMIT: usize = 2048;
 
@@ -62,15 +59,10 @@ pub fn parse(buf: &[u8]) -> Result<(KevHeader, usize), KevError> {
     }
     let get = |k: &str| keywords.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.as_str());
 
-    for (key, want) in [(KEY_VER_MAJOR, VER_MAJOR), (KEY_VER_MINOR, VER_MINOR)] {
-        match get(key) {
-            Some(v) if v == want => {}
-            v => {
-                return Err(KevError::BadFormatVersion {
-                    key: key.into(),
-                    value: v.map(String::from),
-                });
-            }
+    // traceprinter は形式の版のキーが無いと読まない(値は問わない)
+    for key in [KEY_VER_MAJOR, KEY_VER_MINOR] {
+        if get(key).is_none() {
+            return Err(KevError::MissingKey { key: key.into() });
         }
     }
     let release = get(KEY_SYS_RELEASE);
@@ -134,10 +126,7 @@ mod tests {
     fn errors() {
         assert_eq!(parse(b"TRACE_HEADER_BEGIN::").unwrap_err(), KevError::NoHeaderEnd);
         let no_ver = OK.replace("TRACE_VER_MAJOR::2", "");
-        assert!(matches!(
-            parse(no_ver.as_bytes()),
-            Err(KevError::BadFormatVersion { .. })
-        ));
+        assert!(matches!(parse(no_ver.as_bytes()), Err(KevError::MissingKey { .. })));
         let v7 = OK.replace("8.0.0", "7.1.0");
         assert!(matches!(parse(v7.as_bytes()), Err(KevError::UnsupportedVersion { .. })));
         let long = OK.replace("a::b", &"x".repeat(3000));
