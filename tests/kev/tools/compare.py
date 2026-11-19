@@ -1,20 +1,28 @@
 """traceprinter と tracehub の出力をバイト単位で比べる。
 
-    python tests/kev/tools/compare.py [--qnx 800] [--traceprinter PATH] [--kev-dir DIR ...] [--work DIR]
+    python tests/kev/tools/compare.py [--qnx 800] [--traceprinter PATH] [--kev-dir DIR ...] [--synthetic-dir DIR] [--work DIR]
 
 比べるもの:
   1. 合成データ: 生成器(cargo run -p kevtool -- --qnx <版> scenarios)の CSV と tests/kev/qnx<版>/data/*.csv を
-     tests/kev/tools/kevedit/kevcsv.py で kev にしたもの
+     tests/kev/tools/kevedit/kevcsv.py で kev にしたもの。--synthetic-dir があれば、作らずにその *.kev を使う
   2. --kev-dir の *.kev(実機で取った kev など。リポジトリには入れない)
 
---qnx           版(tests/kev/qnx<版>/ の <版>。例: 800)。省略時は最新の版
---traceprinter  その版の traceprinter。省略時は環境変数 TRACEHUB_TRACEPRINTER_<版>、無ければ TRACEHUB_TRACEPRINTER
---kev-dir       省略時は環境変数 TRACEHUB_KEV_DIR_<版>、無ければ TRACEHUB_KEV_DIR(; 区切りで複数)。無ければ合成データだけ
---work          作業ディレクトリ(省略時は target/compare/qnx<版>)
+--qnx            版(tests/kev/qnx<版>/ の <版>。例: 800)。省略時は最新の版
+--traceprinter   その版の traceprinter。省略時は環境変数 TRACEHUB_TRACEPRINTER_<版>、無ければ TRACEHUB_TRACEPRINTER。
+                 無ければ、正解のファイルのある kev だけを比べる
+--kev-dir        省略時は環境変数 TRACEHUB_KEV_DIR_<版>、無ければ TRACEHUB_KEV_DIR(; 区切りで複数)。無ければ合成データだけ
+--synthetic-dir  合成データの kev と正解の組(traceprinter の無い環境で、ほかの環境で作った合成データを比べるとき。
+                 traceprinter のある環境で compare.py を動かしたあとの <work>/kev/ をそのまま持ってくればよい)
+--work           作業ディレクトリ(省略時は target/compare/qnx<版>)
 
-traceprinter の出力(-o のファイル)と `tracehub traceprinter` の出力を比べ、違えば最初の違う行を出して終了コード 1。
+正解(traceprinter の出力): kev の横に同じ名前の X.tp.txt(`traceprinter -n -f X.kev -o X.tp.txt` で取ったもの)があれば、
+それを使い traceprinter を動かさない。無ければ traceprinter を動かし、<work>/kev/ の合成データの横にも X.tp.txt を書く。
+正解も traceprinter も無い kev は SKIP。標準出力をリダイレクトしたものは正解にならない(末尾の集計の行・改行が違う)。
+
+正解と `tracehub traceprinter` の出力を比べ、違えば最初の違う行を出して終了コード 1。
 結果は <work>/result.json にも書く(tests/kev/tools/event_catalog.py が使う)。
 traceprinter はまれに 0xC0000005 で落ちることがあるので、そのときは 3 回まで実行し直す。
+traceprinter の出力と、それを含む kev と正解の組は、リポジトリに入れない。
 """
 
 from __future__ import annotations
@@ -71,13 +79,14 @@ def main() -> int:
     ap.add_argument("--qnx", choices=versions(), default=versions()[-1])
     ap.add_argument("--traceprinter", type=Path)
     ap.add_argument("--kev-dir", type=Path, action="append")
+    ap.add_argument("--synthetic-dir", type=Path)
     ap.add_argument("--work", type=Path)
     a = ap.parse_args()
     tp = a.traceprinter or env("TRACEHUB_TRACEPRINTER", a.qnx)
-    if not tp:
-        print(f"QNX {a.qnx} の traceprinter の場所を --traceprinter か TRACEHUB_TRACEPRINTER_{a.qnx} で指定してください", file=sys.stderr)
-        return 2
-    tp = Path(tp)
+    tp = Path(tp) if tp else None
+    if tp is None:
+        print(f"QNX {a.qnx} の traceprinter の指定(--traceprinter・TRACEHUB_TRACEPRINTER_{a.qnx})が無いので、"
+              "正解のファイル(X.tp.txt)のある kev だけを比べます")
     kev_dirs = a.kev_dir or [Path(p) for p in (env("TRACEHUB_KEV_DIR", a.qnx) or "").split(";") if p]
 
     r = run(["cargo", "build", "--release", "-q", "-p", "tracehub"], cwd=ROOT)
@@ -87,36 +96,55 @@ def main() -> int:
     exe = ROOT / "target" / "release" / ("tracehub.exe" if os.name == "nt" else "tracehub")
 
     work = a.work or ROOT / "target" / "compare" / f"qnx{a.qnx}"
+    for d in [a.synthetic_dir, *kev_dirs]:
+        if d and d.resolve().is_relative_to(work.resolve()):
+            print(f"{d} は作業ディレクトリ {work} の中にあります(作業ディレクトリは消して作り直すので、外に写してから渡してください)", file=sys.stderr)
+            return 2
     if work.exists():
         shutil.rmtree(work)
     csv_dir, kev_dir, out_dir = work / "csv", work / "kev", work / "out"
     for d in (csv_dir, kev_dir, out_dir):
         d.mkdir(parents=True)
-    r = run(["cargo", "run", "--release", "-q", "-p", "kevtool", "--", "--qnx", a.qnx, "scenarios", csv_dir], cwd=ROOT)
-    if r.returncode != 0:
-        print(r.stderr.decode(errors="replace"), file=sys.stderr)
-        return 1
-    for f in (ROOT / "tests" / "kev" / f"qnx{a.qnx}" / "data").glob("*.csv"):
-        shutil.copy(f, csv_dir / f.name)
     kevs = []
-    for f in sorted(csv_dir.glob("*.csv")):
-        k = kev_dir / (f.stem + ".kev")
-        r = run([sys.executable, TOOLS / "kevedit" / "kevcsv.py", "csv2kev", f, "-o", k])
-        if not k.exists():
-            print(f"{f.name}: kev にできません\n{r.stderr.decode(errors='replace')}", file=sys.stderr)
+    if a.synthetic_dir:
+        kevs += [("合成", k) for k in sorted(a.synthetic_dir.glob("*.kev"))]
+    elif tp is None:
+        print("合成データは正解が無いので比べません(--synthetic-dir で正解の組を渡せます)")
+    else:
+        r = run(["cargo", "run", "--release", "-q", "-p", "kevtool", "--", "--qnx", a.qnx, "scenarios", csv_dir], cwd=ROOT)
+        if r.returncode != 0:
+            print(r.stderr.decode(errors="replace"), file=sys.stderr)
             return 1
-        kevs.append(("合成", k))
+        for f in (ROOT / "tests" / "kev" / f"qnx{a.qnx}" / "data").glob("*.csv"):
+            shutil.copy(f, csv_dir / f.name)
+        for f in sorted(csv_dir.glob("*.csv")):
+            k = kev_dir / (f.stem + ".kev")
+            r = run([sys.executable, TOOLS / "kevedit" / "kevcsv.py", "csv2kev", f, "-o", k])
+            if not k.exists():
+                print(f"{f.name}: kev にできません\n{r.stderr.decode(errors='replace')}", file=sys.stderr)
+                return 1
+            kevs.append(("合成", k))
     for d in kev_dirs:
         kevs += [("実機", k) for k in sorted(d.glob("*.kev"))]
 
-    fail = 0
+    fail = skip = 0
     results = []
     for kind, k in kevs:
         tp_out, th_out = out_dir / (k.stem + ".tp.txt"), out_dir / (k.stem + ".th.txt")
-        err = traceprinter(tp, k, tp_out)
+        given = k.with_name(k.stem + ".tp.txt")
+        if given.exists():
+            shutil.copy(given, tp_out)
+            err = None
+        elif tp is None:
+            err = f"正解({given.name})も traceprinter も無い"
+        else:
+            err = traceprinter(tp, k, tp_out)
+            if err is None and k.parent == kev_dir:  # 持ち出せるように、作った kev の横にも正解を置く
+                shutil.copy(tp_out, given)
         if err:
             print(f"SKIP {kind} {k.name}: {err}")
             results.append({"kind": kind, "kev": str(k), "result": "skip"})
+            skip += 1
             continue
         r = run([exe, "traceprinter", k, th_out])
         if r.returncode != 0:
@@ -132,7 +160,9 @@ def main() -> int:
             fail += 1
         results.append({"kind": kind, "kev": str(k), "result": "ok" if a_ == b_ else "ng"})
     (work / "result.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"QNX {a.qnx}: " + (f"{len(kevs)} 件中 {fail} 件が違います" if fail else f"{len(kevs)} 件すべて一致"))
+    n = len(kevs) - skip
+    summary = f"{n} 件中 {fail} 件が違います" if fail else (f"{n} 件すべて一致" if n else "比べた kev がありません")
+    print(f"QNX {a.qnx}: {summary}" + (f"(SKIP {skip} 件)" if skip else ""))
     return 1 if fail else 0
 
 

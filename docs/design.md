@@ -550,6 +550,7 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 | 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取って同じく比べる。仕上げとして最後に行う | `python tests/kev/tools/compare.py --kev-dir <DIR>` |
 
 - 版は `--qnx`(省略時は最新の版)。traceprinter の場所は `--traceprinter` か環境変数 `TRACEHUB_TRACEPRINTER_<版>`(無ければ `TRACEHUB_TRACEPRINTER`)、実機の kev の置き場所は `--kev-dir` か `TRACEHUB_KEV_DIR_<版>`(無ければ `TRACEHUB_KEV_DIR`)。
+- traceprinter が無い環境: kev の横に同じ名前の正解 `X.tp.txt`(`traceprinter -n -f X.kev -o X.tp.txt` の出力)があれば、それと比べる。合成データは、traceprinter のある環境で compare.py を動かしたあとの `target/compare/qnx<版>/kev/`(kev と正解の組)を写して `--synthetic-dir` で渡す。正解も traceprinter も無い kev は SKIP。
 - 実機で取りにくいイベントは、合成データで確かめる。
 - traceprinter の出力と実機の kev は、リポジトリに入れない。
 
