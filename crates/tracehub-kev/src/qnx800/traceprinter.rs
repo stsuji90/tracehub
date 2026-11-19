@@ -6,7 +6,8 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 
-use super::{HeaderBits, args, def, event_decoder, header_bits, make_header};
+use super::event_parser::{HeaderBits, header_bits, make_header};
+use super::{args, def, event_decoder};
 use crate::model::{CombineStatus, DiagKind, KevFile, OrphanStructure, TraceEvent};
 use crate::tp_format::Missing;
 

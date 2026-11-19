@@ -3,7 +3,7 @@
     python tests/kev/tools/compare.py [--traceprinter PATH] [--kev-dir DIR ...] [--work DIR]
 
 比べるもの:
-  1. 合成データ: 生成器(cargo run --example scenarios)の CSV と tests/kev/data/*.csv を
+  1. 合成データ: 生成器(cargo run --example test_support -- scenarios)の CSV と tests/kev/data/*.csv を
      tests/kev/tools/kevedit/kevcsv.py で kev にしたもの
   2. --kev-dir の *.kev(実機で取った kev など。リポジトリには入れない)
 
@@ -78,7 +78,7 @@ def main() -> int:
     csv_dir, kev_dir, out_dir = work / "csv", work / "kev", work / "out"
     for d in (csv_dir, kev_dir, out_dir):
         d.mkdir(parents=True)
-    r = run(["cargo", "run", "--release", "-q", "-p", "tracehub-kev", "--example", "scenarios", "--", csv_dir], cwd=ROOT)
+    r = run(["cargo", "run", "--release", "-q", "-p", "tracehub-kev", "--example", "test_support", "--", "scenarios", csv_dir], cwd=ROOT)
     if r.returncode != 0:
         print(r.stderr.decode(errors="replace"), file=sys.stderr)
         return 1

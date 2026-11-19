@@ -57,24 +57,20 @@ tracehub/
   crates/
     tracehub-kev/              kev に関するすべての処理(ライブラリ)
       src/
-        lib.rs                 公開 API
+        lib.rs                 公開 API。版のモジュール(qnx800 など)の宣言
         model.rs               KevFile・TraceEvent・DiagInfo などの型
-        semantic_id.rs                 セマンティック ID(版に依存しない。手で保守)
+        semantic_id.rs         セマンティック ID(版に依存しない。手で保守)
         kev_header.rs          kev のヘッダの読み取り(版に共通)
         kev_syspage.rs         syspage の読み飛ばし(版に共通)
         tp_format.rs           書式の部品と、その当てはめ(版に共通)
         qnx800/                QNX 8.0 に依存する部分
-          mod.rs               内部 ID ⇔ セマンティック ID、表示クラス名
           def.rs               内部 ID の定義(生成ファイル)
           args.rs              traceprinter の表示の定義(手で保守)
-          event_parser.rs      スロットの読み取りからイベントの列まで(§6)
-          event_decoder.rs     TraceEvent → 表示文字列(§7)
-          slog2.rs             SLOG2 の表示文字列(§7.4)
+          event_parser.rs      スロットの読み取りからイベントの列まで(§6)。内部 ID ⇔ セマンティック ID
+          event_decoder.rs     TraceEvent → 表示文字列(§7)。SLOG2(§7.4)を含む
           traceprinter.rs      traceprinter 互換出力(§9)
-          scenarios.rs         試験用の合成データの生成(§14)
-          catalog.rs           確認用のイベント一覧(§14)
-      examples/scenarios.rs    合成データを CSV で書く
-      examples/event_catalog.rs 確認用のイベント一覧を TSV で書く
+          test_support.rs      試験・確認用のコード: 合成データの生成と確認用のイベント一覧(§14)
+      examples/test_support.rs 合成データを CSV で、確認用のイベント一覧を TSV で書く(tests/kev/tools/ が使う)
   tests/
     kev/                       kev 用の道具と試験データ(形式ごとにディレクトリを分ける)
       tools/
@@ -354,7 +350,7 @@ args.rs はセマンティック ID ごとに、書式の要素の並びを fast
 
 ### 7.4 SLOG2
 
-SYSTEM の SLOG の payloads に slog2 のレコードが入っていると、traceprinter は `SLOG2` という名前で、レコードの文字列を出す。規則はすべて traceprinter の振る舞いから決めた(合成データで確かめた)。定数は args.rs の SLOG2 の節、手順は slog2.rs。
+SYSTEM の SLOG の payloads に slog2 のレコードが入っていると、traceprinter は `SLOG2` という名前で、レコードの文字列を出す。規則はすべて traceprinter の振る舞いから決めた(合成データで確かめた)。定数は args.rs の SLOG2 の節、手順は event_decoder.rs の slog2 の節。
 
 ```
 t:0x00000110 CPU:00 SYSTEM          :SLOG2             FA connect(62)[tid:5]: pid 1234 proc=server 1234 client 00000012345678d0

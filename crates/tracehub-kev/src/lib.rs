@@ -12,7 +12,6 @@
 mod kev_header;
 mod kev_syspage;
 pub mod model;
-pub mod qnx800;
 pub mod semantic_id;
 pub mod tp_format;
 
@@ -69,7 +68,7 @@ pub fn decode(version: QnxVersion, event: &TraceEvent, opts: &DecodeOptions) -> 
 /// セマンティックなクラス ID の表示文字列(traceprinter が表示するクラス名)
 pub fn class_name(version: QnxVersion, class_id: ClassId) -> Option<&'static str> {
     match version {
-        QnxVersion::V800 => qnx800::class_display(class_id),
+        QnxVersion::V800 => qnx800::event_decoder::class_display(class_id),
     }
 }
 
@@ -77,10 +76,28 @@ pub fn class_name(version: QnxVersion, class_id: ClassId) -> Option<&'static str
 pub fn event_name(version: QnxVersion, class_id: ClassId, event_id: EventId) -> Option<String> {
     match version {
         QnxVersion::V800 => {
-            let (c, e) = qnx800::internal_ids(class_id, event_id)?;
+            let (c, e) = qnx800::event_parser::internal_ids(class_id, event_id)?;
             qnx800::event_decoder::names(c, e).1.filter(|n| !n.is_empty())
         }
     }
+}
+
+/// QNX 8.0 に依存する部分(src/qnx800/)
+pub mod qnx800 {
+    /// 内部 ID の定義(生成ファイル。tests/kev/tools/gen_qnx_def.py の出力のまま)
+    #[rustfmt::skip]
+    pub mod def;
+    /// traceprinter の表示の定義(手で保守する)
+    pub mod args;
+    /// イベントの表示文字列(SLOG2 を含む)
+    pub(crate) mod event_decoder;
+    /// スロットの読み取りからイベントの列まで。内部 ID ⇔ セマンティック ID の変換
+    pub(crate) mod event_parser;
+    /// 試験・確認用のコード(ライブラリの機能ではない)
+    #[doc(hidden)]
+    pub mod test_support;
+    /// traceprinter 互換出力
+    pub(crate) mod traceprinter;
 }
 
 /// traceprinter 互換出力

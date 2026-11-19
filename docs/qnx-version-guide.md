@@ -38,7 +38,7 @@ python tests/kev/tools/gen_qnx_def.py --sdp inputs/sdp-headers --table inputs/do
 1. 前の版のディレクトリ(例: `qnx800/`)を複製して `qnx<版>/` を作る。def.rs は 2 で作ったものを使う。
 2. `model.rs` の `QnxVersion` に版を足し、`from_release()`(`TRACE_SYS_RELEASE` の値 → 版)と `name()` を足す。
 3. `lib.rs` の `match version` に新しい版の腕を足す(`parse`・`decode`・`class_name`・`event_name`・`traceprinter::write`)。
-4. `qnx<版>/mod.rs` の `class_code`・`semantic_ids`・`internal_ids`・`class_display` を確かめる。クラスの増減があれば直す。
+4. `lib.rs` の `pub mod qnx<版> { ... }` でモジュールを宣言し、`qnx<版>/event_parser.rs` の `semantic_ids`・`internal_ids`・`internal_class` を確かめる。クラスの増減があれば直す。
 5. ビルドが通るまで直す(`cargo build`)。
 
 2 つ目の版を足したときに、event_parser.rs・event_decoder.rs・traceprinter.rs のうち版で変わらない部分は、共通のモジュールに移してよい。
@@ -88,7 +88,7 @@ traceprinter が行を出さないイベントも、書式の無い行 `ev(ク�
 python tests/kev/tools/compare.py --traceprinter <traceprinter の場所>
 ```
 
-- 生成器(`qnx<版>/scenarios.rs`)は args.rs と def.rs の全イベントについて、語数・文字列・値の名前を変えた変種を作る。kevcsv.py で kev にして、traceprinter と tracehub の出力をバイト単位で比べる。
+- 生成器(`qnx<版>/test_support.rs` の scenarios)は args.rs と def.rs の全イベントについて、語数・文字列・値の名前を変えた変種を作る。kevcsv.py で kev にして、traceprinter と tracehub の出力をバイト単位で比べる。
 - 違いがあると、最初の違う行が出る。`target/compare/out/` に両方の出力があるので、差分を見て args.rs を直す。
 - よくある違いと直し方:
 
