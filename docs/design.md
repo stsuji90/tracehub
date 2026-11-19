@@ -62,7 +62,7 @@ tracehub/
         semantic_id.rs                 セマンティック ID(版に依存しない。手で保守)
         kev_header.rs          kev のヘッダの読み取り(版に共通)
         kev_syspage.rs         syspage の読み飛ばし(版に共通)
-        tp_format.rs           書式を表す小さな言語と、その解釈(版に共通)
+        tp_format.rs           書式の部品と、その当てはめ(版に共通)
         qnx800/                QNX 8.0 に依存する部分
           mod.rs               内部 ID ⇔ セマンティック ID、表示クラス名
           def.rs               内部 ID の定義(生成ファイル)
@@ -92,7 +92,7 @@ tracehub/
 
 | 版に共通(と仮定する) | 版に依存する |
 |---|---|
-| ヘッダの書式、syspage の位置、スロットの大きさ、トレースバッファの枠、merge と combine の規則、書式の言語(tp_format.rs) | header のビット配置、内部 ID の値、内部 ID → セマンティック ID の対応、書式、traceprinter の表示文字列 |
+| ヘッダの書式、syspage の位置、スロットの大きさ、トレースバッファの枠、merge と combine の規則、書式の部品(tp_format.rs) | header のビット配置、内部 ID の値、内部 ID → セマンティック ID の対応、書式、traceprinter の表示文字列 |
 
 - 定義(def.rs・args.rs)とロジックを分ける。ロジックは定義の名前を参照し、数値や表示文字列を持たない。
 - 版を足すときは、`qnxNNN/` を足して、版の enum(`QnxVersion`)に 1 つ加える。
@@ -341,10 +341,13 @@ merge した順にスロットを処理し、項目を待ち行列に入れて�
 
 - CLI は `Traceprinter` だけを使う。`Marked` は API からだけ使う。
 
-### 7.3 書式の言語(tp_format.rs)
+### 7.3 書式の部品(tp_format.rs)
 
-args.rs はイベントごとに、書式の要素(`h`・`d`・`u`・`q`・`e`・`s`・`sz`・`t`・`flags`・`dump`)の並びを fast と wide について書く。
-テンプレート(`t`)は `{u0}`・`{x0:08}`・`{q0}` などで payloads を参照する。詳しくは tp_format.rs の先頭のコメント。
+args.rs はセマンティック ID ごとに、書式の要素の並びを fast と wide について書く。
+- 決まった形の引数は要素(`h`・`d`・`u`・`q`・`e`・`s`・`sz`・`flags`・`dump`)で書く。大半のイベントはこれだけで書ける。
+- 条件付きの部分や区切りの違う書式など、要素で書けないもの(十数イベント)は `custom(関数)` にし、args.rs の中に普通の Rust の関数で書く。関数は payloads を `a.u(0)`・`a.q(4)`・`a.raw_str(1)` などで読み、`out!(a, ...)` で書く。
+- 文字列で書式を表す言語(テンプレート・条件)は持たない。
+- 合成データの生成器は、custom の関数を語数を変えて動かし、読む語を調べる(語の足りない kev を作らないため)。
 
 ### 7.4 SLOG2
 

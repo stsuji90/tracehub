@@ -78,8 +78,8 @@ traceprinter が行を出さないイベントも、書式の無い行 `ev(ク�
 | メッセージの先頭 | `s(名前, 語, 語数)` |
 
 - 語の番号は payloads の中の位置(0 から)。64 ビットの引数の後ろは 2 つずれる。
-- 16 進か 10 進か、ラベルの綴り、条件付きの部分(`.when(...)`)は TableOfEvents からは分からない。合成データの比較で traceprinter に合わせる。
-- 書き方の詳細は `tp_format.rs` の先頭のコメント。値の名前の表は `TABLES` に足す。
+- 16 進か 10 進か、ラベルの綴り、条件付きの部分(`custom` の関数)は TableOfEvents からは分からない。合成データの比較で traceprinter に合わせる。
+- 書き方の詳細は `tp_format.rs` の先頭のコメント。値の名前の表は `TABLE_*` として足し、要素や関数から直接参照する。
 - TableOfEvents の誤記は args.rs で読み替え、コメントに残す。
 
 ## 5. traceprinter と比べて直す
@@ -97,11 +97,11 @@ python tests/kev/tools/compare.py --traceprinter <traceprinter の場所>
 | イベント名が違う | EVENTS の `.name(...)`・`KERCALL_NAMES*` |
 | 引数のラベル・16 進 / 10 進・並び | `EVENTS` の書式 |
 | traceprinter は行を出さない | `.fast_silent()` / `.wide_silent()` / `.min_words(n)`、`THREAD_MAX_PRINTED` |
-| 語が足りないときだけ違う | `.when("words >= n")` |
+| 語が足りないときだけ違う | `custom` の関数で `a.words()` を見る |
 | 行の数・位置が違う(TRUNC・ORPHAN) | `COMBINE_WINDOW`、event_parser.rs の組み立て |
 
 - traceprinter がスロットの外を読む書式(必要な語より短いイベント)は、生成器が作らないようにしている。生成器を直すときもこの点を守る。
-- 新しい書式の要素が要るときは、tp_format.rs に足す(版に共通の言語なので、前の版の出力が変わらないことを確かめる)。
+- 新しい書式の要素が要るときは、tp_format.rs に足す(版に共通なので、前の版の出力が変わらないことを確かめる)。
 
 ## 6. 仕上げ
 
