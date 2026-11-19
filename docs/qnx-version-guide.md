@@ -29,7 +29,7 @@ python tests/kev/tools/gen_qnx_def.py --sdp inputs/sdp-headers --table inputs/do
 ```
 
 - 版はヘッダの `_NTO_VERSION` から決まり、`crates/tracehub-kev/src/qnx<版>/def.rs` に書かれる(例: 800 → `qnx800`)。
-- def.rs は semantic_id.rs の定数を名前で参照する(64 ビット版は `名前_64`)。**ビルドで「semantic_id::xxx::NAME が無い」と出たら、semantic_id.rs の該当モジュールの末尾に定数を足す**(番号はそのモジュールの最大 + 1)。
+- def.rs は semantic_id.rs の定数を名前で参照する(64 ビット版は `名前_64`)。**ビルドで「semantic_id::xxx::NAME が無い」と出たら、semantic_id.rs の該当モジュールの末尾に定数を足す**(番号はそのモジュールの最大 + 1)。クラスを足すときは `ClassId` の定数と、名前の一覧 `ClassId::ALL` の両方に足す。
 - 前の版の def.rs と差分をとり、変わった点(番号の付け替え、名前の追加・削除、ビット配置)を把握する。名前が同じで意味が変わったものがあれば、semantic_id.rs に新しい ID を足すかを判断する(意味が同じなら同じ ID)。
 - ヘッダの書き方が変わって生成スクリプトが値を取れないときは、スクリプトを直す(ヘッダの定義名で引く。値を書き込まない)。
 

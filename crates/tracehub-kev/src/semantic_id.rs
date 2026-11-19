@@ -31,6 +31,28 @@ impl ClassId {
     pub const QUIP: ClassId = ClassId(11);
     pub const SEC: ClassId = ClassId(12);
     pub const QVM: ClassId = ClassId(13);
+
+    /// 定数の名前と ID(UNKNOWN を除く)。クラスを足したらここにも足す
+    pub const ALL: &[(&'static str, ClassId)] = &[
+        ("CONTROL", ClassId::CONTROL),
+        ("KER_CALL_ENTER", ClassId::KER_CALL_ENTER),
+        ("KER_CALL_EXIT", ClassId::KER_CALL_EXIT),
+        ("KER_CALL_INT", ClassId::KER_CALL_INT),
+        ("INT", ClassId::INT),
+        ("THREAD", ClassId::THREAD),
+        ("PROCESS", ClassId::PROCESS),
+        ("SYSTEM", ClassId::SYSTEM),
+        ("USER", ClassId::USER),
+        ("COMM", ClassId::COMM),
+        ("QUIP", ClassId::QUIP),
+        ("SEC", ClassId::SEC),
+        ("QVM", ClassId::QVM),
+    ];
+
+    /// 定数の名前(例: "KER_CALL_ENTER")。traceprinter の表示クラス名ではない(それは [`crate::class_name`])
+    pub fn const_name(self) -> &'static str {
+        Self::ALL.iter().find(|r| r.1 == self).map_or("UNKNOWN", |r| r.0)
+    }
 }
 
 impl EventId {
@@ -385,4 +407,25 @@ pub mod qvm {
     pub const TIMER_CREATE: EventId = EventId(6);
     pub const TIMER_FIRE: EventId = EventId(7);
     pub const CYCLES: EventId = EventId(8);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ClassId::ALL は名前も番号も重複しない
+    #[test]
+    fn class_ids_are_unique() {
+        let mut names: Vec<_> = ClassId::ALL.iter().map(|r| r.0).collect();
+        let mut ids: Vec<_> = ClassId::ALL.iter().map(|r| r.1).collect();
+        names.sort();
+        names.dedup();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(names.len(), ClassId::ALL.len());
+        assert_eq!(ids.len(), ClassId::ALL.len());
+        assert!(!ids.contains(&ClassId::UNKNOWN));
+        assert_eq!(ClassId::KER_CALL_EXIT.const_name(), "KER_CALL_EXIT");
+        assert_eq!(ClassId::UNKNOWN.const_name(), "UNKNOWN");
+    }
 }

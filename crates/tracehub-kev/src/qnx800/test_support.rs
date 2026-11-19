@@ -1307,26 +1307,6 @@ pub mod catalog {
         pub example_wide: String,
     }
 
-    /// クラス ID の定数名
-    pub fn class_name(c: ClassId) -> &'static str {
-        match c {
-            ClassId::CONTROL => "CONTROL",
-            ClassId::KER_CALL_ENTER => "KER_CALL_ENTER",
-            ClassId::KER_CALL_EXIT => "KER_CALL_EXIT",
-            ClassId::KER_CALL_INT => "KER_CALL_INT",
-            ClassId::INT => "INT",
-            ClassId::THREAD => "THREAD",
-            ClassId::PROCESS => "PROCESS",
-            ClassId::SYSTEM => "SYSTEM",
-            ClassId::USER => "USER",
-            ClassId::COMM => "COMM",
-            ClassId::QUIP => "QUIP",
-            ClassId::SEC => "SEC",
-            ClassId::QVM => "QVM",
-            _ => "UNKNOWN",
-        }
-    }
-
     /// def.rs の表から、セマンティック ID の全組み合わせと定数名(USER・QUIP の任意番号を除く)
     pub fn all_ids() -> Vec<(ClassId, EventId, String)> {
         let mut out = Vec::new();
@@ -1473,7 +1453,7 @@ pub mod catalog {
                 Entry {
                     class_id: c,
                     event_id: e,
-                    class: class_name(c),
+                    class: c.const_name(),
                     event: name,
                     int_class: ic,
                     int_event: code,
