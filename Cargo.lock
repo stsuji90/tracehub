@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "kevtool"
+version = "0.1.0"
+dependencies = [
+ "tracehub-kev",
+]
+
+[[package]]
 name = "log"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"

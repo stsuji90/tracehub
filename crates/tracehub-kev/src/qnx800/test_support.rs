@@ -1,6 +1,6 @@
 //! 試験・確認用のコード(ライブラリの機能ではない)。
 //!
-//! examples/test_support.rs と tests/kev/tools/ の道具が使う。
+//! tests/kev/tools/kevtool(compare.py・event_catalog.py が呼ぶ)と単体試験が使う。
 //! - scenarios: 試験用の合成データ(kevcsv の CSV)と、全イベントを流す試験
 //! - catalog: 確認用のイベント一覧(セマンティック ID ごとの定義・表示・合成データでの出力の例)
 
@@ -1267,7 +1267,7 @@ pub mod scenarios {
 pub mod catalog {
     //! 確認用のイベント一覧(セマンティック ID ごとの定義・表示・合成データでの出力の例)。
     //!
-    //! tests/kev/tools/event_catalog.py が examples/test_support.rs を通して使い、TableOfEvents・
+    //! tests/kev/tools/event_catalog.py が kevtool を通して使い、TableOfEvents・
     //! traceprinter との比較結果・実機の kev と並べた一覧を作る。
 
     use std::collections::BTreeMap;

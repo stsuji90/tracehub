@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/tracehub-kev", "apps/tracehub"]
+members = ["crates/tracehub-kev", "apps/tracehub", "tests/kev/tools/kevtool"]
 resolver = "3"
 
 [workspace.package]

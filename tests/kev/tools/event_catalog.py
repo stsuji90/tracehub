@@ -151,7 +151,7 @@ def main() -> int:
     kev_dirs = a.kev_dir or [Path(p) for p in os.environ.get("TRACEHUB_KEV_DIR", "").split(";") if p]
     real_kevs = [k for d in kev_dirs for k in sorted(d.glob("*.kev"))]
 
-    r = subprocess.run(["cargo", "run", "--release", "-q", "-p", "tracehub-kev", "--example", "test_support", "--", "catalog",
+    r = subprocess.run(["cargo", "run", "--release", "-q", "-p", "kevtool", "--", "catalog",
                         *map(str, real_kevs)], cwd=ROOT, capture_output=True)
     if r.returncode != 0:
         print(r.stderr.decode(errors="replace"), file=sys.stderr)

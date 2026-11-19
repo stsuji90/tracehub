@@ -69,14 +69,14 @@ tracehub/
           event_parser.rs      スロットの読み取りからイベントの列まで(§6)。内部 ID ⇔ セマンティック ID
           event_decoder.rs     TraceEvent → 表示文字列(§7)。SLOG2(§7.4)を含む
           traceprinter.rs      traceprinter 互換出力(§9)
-          test_support.rs      試験・確認用のコード: 合成データの生成と確認用のイベント一覧(§14)
-      examples/test_support.rs 合成データを CSV で、確認用のイベント一覧を TSV で書く(tests/kev/tools/ が使う)
+          test_support.rs      試験・確認用のコード: 合成データの生成と確認用のイベント一覧(§14。tests/kev/tools/kevtool が呼ぶ)
   tests/
     kev/                       kev 用の道具と試験データ(形式ごとにディレクトリを分ける)
       tools/
         gen_qnx_def.py         SDP のヘッダと TableOfEvents から def.rs を生成する
         compare.py             traceprinter と tracehub の出力を比べる
         event_catalog.py       確認用のイベント一覧を作る(TableOfEvents・比較の結果・実機の kev と並べる)
+        kevtool/               合成データ・確認用の一覧を書き出す小さな実行ファイル(compare.py・event_catalog.py が呼ぶ。中身は test_support.rs)
         kevedit/               試験用の kev を CSV から作る道具(kevedit.html、kevcsv.py、CSV_FORMAT.md)
       data/                    試験用の合成データ(小さな場面の CSV)
   docs/

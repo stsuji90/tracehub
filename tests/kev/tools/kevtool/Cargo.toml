@@ -1,0 +1,9 @@
+[package]
+name = "kevtool"
+description = "試験・確認用の道具(compare.py・event_catalog.py が呼ぶ。公開しない)"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+tracehub-kev = { path = "../../../../crates/tracehub-kev" }

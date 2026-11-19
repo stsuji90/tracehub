@@ -1,7 +1,8 @@
-//! 試験・確認用の道具(tests/kev/tools/ の compare.py・event_catalog.py が使う)。
+//! 試験・確認用の道具(同じディレクトリの compare.py・event_catalog.py が呼ぶ)。
+//! 本体は tracehub-kev の qnx800::test_support にあり、ここは引数の解釈と書き出しだけ。
 //!
-//!     cargo run -p tracehub-kev --example test_support -- scenarios <出力ディレクトリ>
-//!     cargo run -p tracehub-kev --example test_support -- catalog [実機の kev ...]
+//!     cargo run -p kevtool -- scenarios <出力ディレクトリ>
+//!     cargo run -p kevtool -- catalog [実機の kev ...]
 //!
 //! scenarios: 試験用の合成データ(kevcsv の CSV)をディレクトリに書く。
 //!
@@ -26,7 +27,7 @@ fn cell(s: &str) -> String {
         .collect()
 }
 
-const USAGE: &str = "usage: test_support scenarios <OUTPUT_DIR> | test_support catalog [KEV ...]";
+const USAGE: &str = "usage: kevtool scenarios <OUTPUT_DIR> | kevtool catalog [KEV ...]";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
