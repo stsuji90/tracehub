@@ -9,15 +9,15 @@
 //! ヘッダの値は印字可能な ASCII。イベントの文字列(args など)は payloads のバイトを 1 バイト 1 文字にしたもの
 //! (traceprinter はバイトをそのまま出力するので、文字コードは決まっていない)。
 
-pub mod ids;
 mod kev_header;
 mod kev_syspage;
 pub mod model;
 pub mod qnx800;
+pub mod semantic_id;
 pub mod tp_format;
 
-pub use ids::{ClassId, EventId};
 pub use model::*;
+pub use semantic_id::{ClassId, EventId};
 
 use tp_format::Missing;
 

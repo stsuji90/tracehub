@@ -1,6 +1,6 @@
 //! 公開するデータの型(設計書 §5)。
 
-use crate::ids::{ClassId, EventId};
+use crate::semantic_id::{ClassId, EventId};
 
 /// 対応している QNX の版
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

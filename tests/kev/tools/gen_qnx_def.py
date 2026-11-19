@@ -11,8 +11,8 @@ def.rs に書くもの:
   - 内部クラス ID、CONTROL のイベント番号と payloads の位置、cookie
   - KER_CALL のイベント番号の作り(コール番号のマスク、exit / int / 64 ビットのビット)
   - クラスごとの (内部イベント番号, 名前, セマンティック ID) の表(KER_CALL・SYSTEM は 64 ビット版の表も)
-セマンティック ID は crates/tracehub-kev/src/ids.rs の定数を名前で参照する。
-ids.rs に無い名前があると def.rs がビルドできないので、ids.rs に追加する(番号は追加だけ)。
+セマンティック ID は crates/tracehub-kev/src/semantic_id.rs の定数を名前で参照する。
+semantic_id.rs に無い名前があると def.rs がビルドできないので、semantic_id.rs に追加する(番号は追加だけ)。
 """
 
 from __future__ import annotations
@@ -204,7 +204,7 @@ def main() -> int:
         "//! 生成ファイル(tests/kev/tools/gen_qnx_def.py)。手で編集しない。",
         "//! 入力: SDP のヘッダ(" + "、".join(HEADERS) + ")と TableOfEvents。",
         "",
-        "use crate::ids::{self, EventId};",
+        "use crate::semantic_id::{self, EventId};",
         "",
         "// ---- header のビット配置(_NTO_TRACE_GETEVENT・_NTO_TRACE_GETEVENT_C・_NTO_TRACE_GETCPU・_TRACE_GET_STRUCT)",
         f"pub const EVENT_SHIFT: u32 = {ev_shift};",
@@ -248,31 +248,31 @@ def main() -> int:
         "// ---- PR_TH のイベント番号: これより小さければスレッドの状態(_TRACE_PR_TH_CREATE_P)",
         f"pub const PR_TH_PROCESS_BASE: u16 = {pr_th['CREATE_P']};",
         "",
-        rows("KERCALLS", [(v, n, f"ids::kercall::{n}") for n, v in kercalls], "カーネルコール(__KER_*): (コール番号, 名前, セマンティック ID)"),
+        rows("KERCALLS", [(v, n, f"semantic_id::kercall::{n}") for n, v in kercalls], "カーネルコール(__KER_*): (コール番号, 名前, セマンティック ID)"),
         "",
-        rows("KERCALLS_64", [(v, n, f"ids::kercall::{n}_64") for n, v in kercalls],
+        rows("KERCALLS_64", [(v, n, f"semantic_id::kercall::{n}_64") for n, v in kercalls],
              "カーネルコールの 64 ビット版(全コール): (コール番号, 名前, セマンティック ID)"),
         "",
-        rows("THREAD_STATES", [(v, n, f"ids::thread::{n}") for n, v in states], "スレッドの状態(STATE_*)。PR_TH のイベント番号"),
+        rows("THREAD_STATES", [(v, n, f"semantic_id::thread::{n}") for n, v in states], "スレッドの状態(STATE_*)。PR_TH のイベント番号"),
         "",
-        rows("PR_TH_VTHREAD", [(pr_th[n], n, f"ids::thread::{n}") for n in vt_names], "仮想スレッドの生成・破棄(_TRACE_PR_TH_*_VT)"),
+        rows("PR_TH_VTHREAD", [(pr_th[n], n, f"semantic_id::thread::{n}") for n in vt_names], "仮想スレッドの生成・破棄(_TRACE_PR_TH_*_VT)"),
         "",
-        rows("PR_TH_PROCESS", [(pr_th[n], n, f"ids::process::{n}") for n in proc_names], "プロセスのイベント(_TRACE_PR_TH_*)"),
+        rows("PR_TH_PROCESS", [(pr_th[n], n, f"semantic_id::process::{n}") for n in proc_names], "プロセスのイベント(_TRACE_PR_TH_*)"),
         "",
-        rows("CONTROL_EVENTS", [(v, n, f"ids::control::{n}") for n, v in control], "CONTROL のイベント"),
+        rows("CONTROL_EVENTS", [(v, n, f"semantic_id::control::{n}") for n, v in control], "CONTROL のイベント"),
         "",
-        rows("INT_EVENTS", [(v, n, f"ids::int::{n}") for n, v in ints], "INT のイベント(_TRACE_INT_*)"),
+        rows("INT_EVENTS", [(v, n, f"semantic_id::int::{n}") for n, v in ints], "INT のイベント(_TRACE_INT_*)"),
         "",
-        rows("SYSTEM_EVENTS", [(v, n, f"ids::system::{n}") for n, v in system], "SYSTEM のイベント(_NTO_TRACE_SYS_*)"),
+        rows("SYSTEM_EVENTS", [(v, n, f"semantic_id::system::{n}") for n, v in system], "SYSTEM のイベント(_NTO_TRACE_SYS_*)"),
         "",
-        rows("SYSTEM_EVENTS_64", [(v, n, f"ids::system::{n}_64") for n, v in system64],
+        rows("SYSTEM_EVENTS_64", [(v, n, f"semantic_id::system::{n}_64") for n, v in system64],
              "SYSTEM の 64 ビット版(_NTO_TRACE_SYS_*_64、TableOfEvents の |_NTO_TRACE_KERCALL64): (BIT64 を足した番号, 名前, セマンティック ID)"),
         "",
-        rows("COMM_EVENTS", [(v, n, f"ids::comm::{n}") for n, v in comm], "COMM のイベント(_NTO_TRACE_COMM_*)"),
+        rows("COMM_EVENTS", [(v, n, f"semantic_id::comm::{n}") for n, v in comm], "COMM のイベント(_NTO_TRACE_COMM_*)"),
         "",
-        rows("SEC_EVENTS", [(v, n, f"ids::sec::{n}") for n, v in sec], "SEC のイベント(_NTO_TRACE_SEC_*)"),
+        rows("SEC_EVENTS", [(v, n, f"semantic_id::sec::{n}") for n, v in sec], "SEC のイベント(_NTO_TRACE_SEC_*)"),
         "",
-        rows("QVM_EVENTS", [(v, n, f"ids::qvm::{n}") for n, v in qvm], "QVM のイベント(_NTO_TRACE_QVM_*)"),
+        rows("QVM_EVENTS", [(v, n, f"semantic_id::qvm::{n}") for n, v in qvm], "QVM のイベント(_NTO_TRACE_QVM_*)"),
         "",
     ]
     text = "\n".join(out)

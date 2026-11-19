@@ -59,7 +59,7 @@ tracehub/
       src/
         lib.rs                 公開 API
         model.rs               KevFile・TraceEvent・DiagInfo などの型
-        ids.rs                 セマンティック ID(版に依存しない。手で保守)
+        semantic_id.rs                 セマンティック ID(版に依存しない。手で保守)
         kev_header.rs          kev のヘッダの読み取り(版に共通)
         kev_syspage.rs         syspage の読み飛ばし(版に共通)
         tp_format.rs           書式を表す小さな言語と、その解釈(版に共通)
@@ -401,7 +401,7 @@ pub struct EventId(pub u16);
 // ClassId::UNKNOWN / EventId::UNKNOWN = 0xFFFF(解釈できなかったもの)
 ```
 
-- ids.rs に定数として定義する。版に依存しない。
+- semantic_id.rs に定数として定義する。版に依存しない。
 - 一度決めた番号は変えない。追加だけする。手で保守する。
 
 ### クラス
@@ -425,9 +425,9 @@ pub struct EventId(pub u16);
 
 ### イベント
 
-- クラスごとのモジュール(`ids::kercall`・`ids::thread`・`ids::system` など)に、意味(QNX の名前)ごとの番号を定数で置く。カーネルコールの番号などとは別の番号。
-- KER_CALL の enter / exit / int はクラスで区別し、イベント ID は共通(`ids::kercall`)。
-- 64 ビット版(KER_CALL・SYSTEM)は別のイベント ID(`ids::kercall::MSG_SENDV_64` など)。番号に意味を持たせない。
+- クラスごとのモジュール(`semantic_id::kercall`・`semantic_id::thread`・`semantic_id::system` など)に、意味(QNX の名前)ごとの番号を定数で置く。カーネルコールの番号などとは別の番号。
+- KER_CALL の enter / exit / int はクラスで区別し、イベント ID は共通(`semantic_id::kercall`)。
+- 64 ビット版(KER_CALL・SYSTEM)は別のイベント ID(`semantic_id::kercall::MSG_SENDV_64` など)。番号に意味を持たせない。
   - KER_CALL は全コールに 64 ビット版の ID を置く。TableOfEvents に記載の無い 64 ビット版もカーネルは記録し、traceprinter は表示するため(実測: `MSG_SEND_PULSE` など)。
   - SYSTEM はヘッダの `_NTO_TRACE_SYS_*_64` と TableOfEvents の `|_NTO_TRACE_KERCALL64` にあるものだけ。それ以外の 64 ビット版は UNKNOWN。
   - def.rs の `KERCALLS_64`・`SYSTEM_EVENTS_64` が、内部イベント番号との対応を持つ。
@@ -505,7 +505,7 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 
 | ファイル | 作り方 | 内容 |
 |---|---|---|
-| ids.rs | 手で保守(番号は追加だけ) | セマンティック ID |
+| semantic_id.rs | 手で保守(番号は追加だけ) | セマンティック ID |
 | qnxNNN/def.rs | tests/kev/tools/gen_qnx_def.py で生成(手で編集しない) | header のビット配置、内部クラス ID、CONTROL のイベント番号と payloads の位置、KER_CALL のビット、クラスごとの (内部イベント番号, 名前, セマンティック ID) |
 | qnxNNN/args.rs | AI が作り、traceprinter の出力で確かめる | 出力の枠、診断の行、表示名、書式、出力しない条件 |
 

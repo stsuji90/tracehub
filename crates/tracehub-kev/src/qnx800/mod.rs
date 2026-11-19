@@ -17,7 +17,7 @@ pub mod scenarios;
 pub(crate) mod slog2;
 pub(crate) mod traceprinter;
 
-use crate::ids::{ClassId, EventId};
+use crate::semantic_id::{ClassId, EventId};
 
 /// header の各部
 #[derive(Debug, Clone, Copy)]
@@ -242,7 +242,7 @@ pub(crate) fn internal_ids(class: ClassId, event: EventId) -> Option<(u8, u16)> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ids;
+    use crate::semantic_id;
 
     #[test]
     fn semantic_round_trip() {
@@ -251,18 +251,28 @@ mod tests {
                 def::CLASS_KER_CALL,
                 11,
                 ClassId::KER_CALL_ENTER,
-                ids::kercall::MSG_SENDV,
+                semantic_id::kercall::MSG_SENDV,
             ),
             (
                 def::CLASS_KER_CALL,
                 11 | def::KERCALL_EXIT | def::BIT64,
                 ClassId::KER_CALL_EXIT,
-                ids::kercall::MSG_SENDV_64,
+                semantic_id::kercall::MSG_SENDV_64,
             ),
-            (def::CLASS_PR_TH, 1, ClassId::THREAD, ids::thread::RUNNING),
-            (def::CLASS_PR_TH, 192, ClassId::PROCESS, ids::process::CREATE_P_NAME),
-            (def::CLASS_SYSTEM, 12, ClassId::SYSTEM, ids::system::SLOG),
-            (def::CLASS_SYSTEM, 16 | def::BIT64, ClassId::SYSTEM, ids::system::IPI_64),
+            (def::CLASS_PR_TH, 1, ClassId::THREAD, semantic_id::thread::RUNNING),
+            (
+                def::CLASS_PR_TH,
+                192,
+                ClassId::PROCESS,
+                semantic_id::process::CREATE_P_NAME,
+            ),
+            (def::CLASS_SYSTEM, 12, ClassId::SYSTEM, semantic_id::system::SLOG),
+            (
+                def::CLASS_SYSTEM,
+                16 | def::BIT64,
+                ClassId::SYSTEM,
+                semantic_id::system::IPI_64,
+            ),
             (def::CLASS_USER, 77, ClassId::USER, EventId(77)),
         ];
         for (c, e, sc, se) in cases {
@@ -273,7 +283,7 @@ mod tests {
         // KER_CALL は全コールに 64 ビット版がある。定義の無いコール番号は UNKNOWN
         assert_eq!(
             semantic_ids(def::CLASS_KER_CALL, def::BIT64),
-            (ClassId::KER_CALL_ENTER, ids::kercall::NOP_64)
+            (ClassId::KER_CALL_ENTER, semantic_id::kercall::NOP_64)
         );
         assert_eq!(
             semantic_ids(def::CLASS_KER_CALL, 120 | def::BIT64),

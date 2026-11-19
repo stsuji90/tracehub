@@ -9,8 +9,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::{args, def, event_decoder, header_bits, semantic_ids};
-use crate::ids::{ClassId, EventId};
 use crate::model::{CombineStatus, DiagInfo, DiagKind, DisplayStatus, OrphanStructure, TraceEvent, TruncateReason};
+use crate::semantic_id::{ClassId, EventId};
 use crate::tp_format::Missing;
 
 /// スロットの word の数

@@ -1122,8 +1122,8 @@ mod tests {
     /// 定義の無いイベントは Unknown(SEC のように traceprinter が行を出すものは Display)
     #[test]
     fn unknown_events_have_unknown_display_status() {
-        use crate::ids::EventId;
         use crate::model::DisplayStatus;
+        use crate::semantic_id::EventId;
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/kev/data/unknown_event.csv");
         let kev = crate::parse(&kev_bytes(&std::fs::read_to_string(path).unwrap())).unwrap();
         let status = |class: u8, event: u16| {
@@ -1186,7 +1186,7 @@ mod tests {
                 {
                     assert_ne!(
                         ev.event_id,
-                        crate::ids::EventId::UNKNOWN,
+                        crate::semantic_id::EventId::UNKNOWN,
                         "{name}: {} {:#x}",
                         ev.int_class_id,
                         ev.int_event_id
@@ -1205,8 +1205,8 @@ mod tests {
 #[cfg(test)]
 mod coverage {
     use super::*;
-    use crate::ids::{ClassId, EventId};
     use crate::model::{CombineStatus, DisplayStatus};
+    use crate::semantic_id::{ClassId, EventId};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// def.rs の表から、セマンティック ID の全組み合わせ(USER・QUIP の任意番号を除く)
