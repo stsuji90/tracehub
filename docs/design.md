@@ -83,11 +83,32 @@ tracehub/
         kevedit_defs.json      kevedit の定義(生成ファイル)
   docs/
     design.md                  この文書
-    qnx-version-guide.md       QNX の版の定義をそろえる手順(別の作業者向け)
+    semantic-id.md             セマンティック ID の説明と一覧(一覧は生成部分)
+    testing.md                 試験の種類・動かし方・結果の読み方・試験データの足し方
+    qnx-version-guide.md       QNX の版を足す・定義を直す・サポートを切る手順(別の作業者向け)
 ```
 
 - 実行ファイル(CLI、将来の GUI)は `apps/`、ライブラリは `crates/` に置く。
 - トレースの形式ごとのライブラリは `crates/tracehub-<形式>`、その道具と試験データは `tests/<形式>/` に置く。
+
+### モジュールの責務と主な関数
+
+| モジュール | 責務 | 主な関数・定義 |
+|---|---|---|
+| `lib.rs` | 公開 API。版ごとのモジュールへの振り分け(`match version`) | `parse`・`decode`・`class_name`・`event_name`・`traceprinter::write` |
+| `model.rs` | 公開する型 | `KevFile`・`KevHeader`・`TraceEvent`・`DiagInfo`・`QnxVersion`・`KevError` |
+| `semantic_id.rs` | セマンティック ID の定数 | `ClassId`・`EventId`・`ClassId::ALL`・クラスごとのモジュール |
+| `kev_header.rs` | ヘッダの文字列を項目に分け、誤りを見つけ、版を決める | `parse` |
+| `kev_syspage.rs` | syspage の長さだけ読み飛ばす | `skip` |
+| `tp_format.rs` | 書式の要素(`h`・`d`・`custom` など)と、それを payloads に当てはめる処理。QNX 固有の名前や番号は持たない | `render`・`Out`・`out!`・`Usage` |
+| `qnx800/def.rs` | 内部 ID の定義(生成ファイル) | `CLASS_*`・`CONTROL_*`・ビット配置・クラスごとの表 |
+| `qnx800/args.rs` | traceprinter の表示の定義(手で保守) | `EVENTS`・`CLASS_DISPLAY`・出力の枠・診断の行・SLOG2 の定数 |
+| `qnx800/event_parser.rs` | スロットの読み取りから TraceEvent の列まで。header の各部の取り出し、内部 ID ⇔ セマンティック ID | `parse`・`semantic_ids`・`internal_ids`・`header_bits` |
+| `qnx800/event_decoder.rs` | 1 イベントの表示文字列(行を出すか、名前、書式の選択)。SLOG2 | `format`・`names`・`blank_after`・`class_display`・`slog2::render` |
+| `qnx800/traceprinter.rs` | traceprinter 互換出力(枠・ヘッダの行・イベントの行・診断の行) | `write` |
+| `qnx800/test_support.rs` | 試験・確認用(ライブラリの機能ではない) | `scenarios::scenarios`・`catalog::entries` |
+
+ロジック(event_parser・event_decoder・traceprinter)は、数値と表示文字列を def.rs・args.rs の名前で参照する。版で変わるのは基本的に def.rs と args.rs で、ロジックは版をまたいで同じ形を保つ。
 
 ### 版に依存する部分と依存しない部分
 
@@ -253,6 +274,29 @@ pub struct DiagInfo {
   → KevFile
 ```
 
+### 6.0 例: スロットから行まで
+
+QNX 8.0 の kev で、CPU 0 の MSG_SENDV の呼び出し(S のスロット 1 つ)が次のように書かれていたとする。
+
+| word | 値 | 意味 |
+|---|---|---|
+| 0(header) | `0x0000080b` | 構造 S(ビット 30〜31 = 0)、CPU 0、フラグ 0、内部クラス 2(KER_CALL。ビット 10〜14)、内部イベント番号 11(ビット 0〜9) |
+| 1 | `0x00000100` | timestamp_cycles_low32 |
+| 2・3 | `0x00000003`・`0x41414141` | payloads |
+
+1. **parse()**: header から内部 ID (2, 11) を取り出し、`semantic_ids()` で (`KER_CALL_ENTER`, `kercall::MSG_SENDV`) にする(enter / exit / int のビットが無いので ENTER)。時刻は TIME で補った 64 ビット。
+   → `TraceEvent { class_id: KER_CALL_ENTER, event_id: MSG_SENDV, int_class_id: 2, int_event_id: 11, payloads: [3, 0x41414141], combine_status: Complete, display_status: Display, … }`
+2. **decode()**: args.rs の EVENTS から `ev(ClassId::KER_CALL_ENTER, kercall::MSG_SENDV)` の行を引く。payloads が 2 語なので fast の書式 `[h("coid", 0), s("msg[0]", 1, 1)]` を当てはめる。表示名は KER_CALL の規則で `MSG_SENDV/11`。
+   → `DecodedEvent { class_name: "KER_CALL", event_name: "MSG_SENDV/11", args: " coid:0x00000003 msg[0]:\"AAAA\" (0x41414141)" }`
+3. **traceprinter 互換出力**: 行の書式に当てはめる。
+
+```
+t:0x00000100 CPU:00 KER_CALL        :MSG_SENDV/11       coid:0x00000003 msg[0]:"AAAA" (0x41414141)
+```
+
+同じイベントが組(header が CB `0x4000080b`・CC `0x8000080b`・CE `0xc000080b` の 3 スロット、payloads 6 語)で書かれていれば、wide の書式で
+` coid:0x00000003 sparts:1 rparts:2 msg[0]:"AAAABBBBCCCC" (0x41414141 0x42424242 0x43434343)` のようになる。
+
 ### 6.1 ヘッダ
 
 - `TRACE_<英大文字・数字・_>::` をキーとし、次のキーの直前までを値とする。`TRACE_HEADER_END::` で終わる。
@@ -335,6 +379,76 @@ merge した順にスロットを処理し、項目を待ち行列に入れて�
 - SYSTEM の SLOG の payloads が slog2 のレコードなら、表示イベント名は `SLOG2`、args はレコードの文字列(§7.4)。
 - traceprinter が行を出さないもの(Silent、Unknown、Orphan)は、名前が決まればその名前、決まらなければ `UNKNOWN(内部クラス)` と内部イベント番号を返し、args は payloads を 16 進で並べる。
 
+### 7.1.1 1 イベントの行を作る手順(event_decoder.rs の `format`)
+
+1. 内部 ID をセマンティック ID にし、args.rs の EVENTS の行を引く。無ければそのクラスの `any` の行(`max_code` があればその番号まで)。どちらも無ければ行を出さない。
+2. 表示クラス名と表示イベント名を決める(下の表)。表示クラス名が無ければ行を出さない。
+3. SYSTEM の SLOG で payloads が slog2 のレコードなら、名前 `SLOG2` とレコードの文字列(§7.4)。
+4. 行が `intcall` なら、表示クラス名 `INT_CALL`・引数なし。
+5. payloads の語数が行の `min_words` より少なければ、行を出さない。
+6. 書式を選ぶ: 2 語より多ければ wide、それ以外は fast。fast が無ければ `FAST_FALLBACK_WIDE`(KER_CALL は false、ほかは true)で wide を使うか決める。書式が無い・silent なら行を出さない。
+7. KER_CALL_EXIT で payloads の最初の語が `0xffffffff` なら、失敗した exit の共通の書式(`KERCALL_FAILURE`)。それ以外は選んだ書式を当てはめる。
+
+| 表示名の規則 | 表示クラス名 | 表示イベント名 |
+|---|---|---|
+| カーネルコール | `CLASS_DISPLAY`(KER_CALL・KER_EXIT・KER_INT) | `コール名/番号`(`kercall_name`)。コール名は def.rs の名前で、`KERCALL_NAMES`(exit だけは `KERCALL_NAMES_EXIT` も)で読み替える。def.rs に無い番号は `KER_番号` |
+| INT_CALL の形(`.intcall()`) | `INT_CALL` | `KER_コール名/番号`(`intcall_name`。読み替えなし) |
+| スレッドの状態 | `THREAD` | `TH` + 状態の名前(`thread_name`) |
+| `.name("…")` のある行 | `CLASS_DISPLAY` | その名前 |
+| `.name_by_code(f)` のある行(USER・QUIP・SEC の any) | `CLASS_DISPLAY` | `f(内部イベント番号)` |
+| それ以外 | `CLASS_DISPLAY` | def.rs の名前(64 ビット版は 64 ビットでない版の名前) |
+
+### 7.1.2 args.rs の構成
+
+| 節 | 定義 | 内容 |
+|---|---|---|
+| 出力の枠 | `LINE_END`・`BANNER`・`HEADER_TITLE`・`EVENTS_TITLE`・`HEADER_SKIP`・`HEADER_KEY_WIDTH`・`CLASS_WIDTH`・`NAME_WIDTH` | 改行、先頭の行、ヘッダの行と行の幅 |
+| 組み立て | `COMBINE_WINDOW` | 窓の大きさ(§6.6) |
+| 診断の行 | `DIAG_TRUNC`・`DIAG_ORPHAN`・`DIAG_UNKNOWN`・`DIAG_*` | 診断の行の書式と、その中の名前の表 |
+| 表示クラス名 | `CLASS_DISPLAY`・`DISPLAY_INT_CALL` | セマンティックなクラス ID → 表示クラス名 |
+| fast の書式が無いとき | `FAST_FALLBACK_WIDE` | wide を使うか |
+| 表示イベント名 | `kercall_name`・`intcall_name`・`thread_name`・`KERCALL_NAMES*`・`THREAD_MAX_PRINTED` | 上の表の規則 |
+| 値の名前の表 | `TABLE_*` | フラグ・列挙の値の名前(`flags`・`enum_name` が使う) |
+| SLOG2 | `SLOG2_*` | §7.4 の定数 |
+| 後ろに空行 | `BLANK_AFTER` | 行の後ろに空行を入れるイベント |
+| 癖のある書式 | `fn …(a: &Out)` | `custom` の関数(十数イベント) |
+| イベントごとの書式 | `EVENTS` | セマンティック ID ごとに 1 行(全 ID) |
+
+EVENTS の行の書き方:
+
+```rust
+ev(ClassId::KER_CALL_ENTER, kercall::MSG_SENDV)
+    .fast(&[h("coid", 0), s("msg[0]", 1, 1)])                                   // S(と CB だけの組)
+    .wide(&[h("coid", 0), d("sparts", 1), d("rparts", 2), s("msg[0]", 3, 3)]),  // 組
+ev(ClassId::KER_CALL_INT, kercall::MSG_SENDV).intcall(),                        // INT_CALL の形
+ev(ClassId::KER_CALL_ENTER, kercall::NOP_64).fast_silent().wide_silent(),       // 行を出さない
+any(ClassId::USER).name_by_code(user_event_name).args(&[dump()]),               // 定義の無い番号すべて
+```
+
+| 行の部品 | 意味 |
+|---|---|
+| `ev(クラス, イベント)` / `any(クラス)` | セマンティック ID の行 / そのクラスで定義の無い番号の行 |
+| `.args(&[…])` / `.fast(&[…])` / `.wide(&[…])` | fast と wide に同じ書式 / fast だけ / wide だけ |
+| `.args_silent()` / `.fast_silent()` / `.wide_silent()` | traceprinter は出力しない(書式の無い行も出力しない) |
+| `.name("…")` / `.name_by_code(f)` | 表示名を決める |
+| `.intcall()` | 引数の無い INT_CALL の形 |
+| `.min_words(n)` | payloads が n 語より少なければ出力しない |
+| `.max_code(n)` | `any` の行を内部イベント番号 n までに限る |
+
+| 書式の要素 | 出力 |
+|---|---|
+| `h(ラベル, 語)` | ` ラベル:0x%08x` |
+| `d(ラベル, 語)` / `u(ラベル, 語)` | ` ラベル:` 符号付き / 符号なし 10 進 |
+| `q(ラベル, 語)` / `e(ラベル, 語)` | 語と次の語の 64 ビット(16 進 / 符号付き 10 進)。次の語が無ければ `TRUNC:` の表記 |
+| `s(ラベル, 語, 語数)` | ` ラベル:"印字可能な部分" (0x.. ...)`(メッセージの先頭) |
+| `sz(ラベル, 語)` | ` ラベル:` 語からの文字列(途中に印字できない文字があれば空) |
+| `flags(語, 表, 区切り)` | 表のビットが立っていれば、区切りと名前 |
+| `dump()` | ` STR:"..."` と ` d0:0x.. d1:0x..`(USER など) |
+| `custom(関数)` | 関数が書く。関数は `a.u(i)`・`a.d(i)`・`a.q(i)`・`a.words()`・`a.nul_str(i)`・`a.raw_str(i)`・`a.enum_name(表, i, 既定)` で読み、`out!(a, "…", …)` で書く |
+
+- ラベル付きの要素は、開始の語がイベントに無ければ出力しない(traceprinter の振る舞い)。custom の関数の中では、無い語は 0 として読める。
+- 語の番号は payloads の中の位置(0 から)。
+
 ### 7.2 欠けた payloads の表し方(`DecodeOptions::missing`)
 
 | 値 | 内容 |
@@ -401,49 +515,23 @@ t:0x00000110 CPU:00 SYSTEM          :SLOG2             FA connect(62)[tid:5]: pi
 
 ## 8. セマンティック ID
 
+説明と全 ID の一覧は docs/semantic-id.md。ここには設計上の決まりだけを書く。
+
 ```rust
 pub struct ClassId(pub u16);
 pub struct EventId(pub u16);
 // ClassId::UNKNOWN / EventId::UNKNOWN = 0xFFFF(解釈できなかったもの)
 ```
 
-- semantic_id.rs に定数として定義する。版に依存しない。
-- 一度決めた番号は変えない。追加だけする。手で保守する。
-
-### クラス
-
-| class_id | 名前 | 内容 |
-|---|---|---|
-| 1 | CONTROL | TIME・BUFFER・BUFFER_END・DROPPED |
-| 2 | KER_CALL_ENTER | カーネルコールの呼び出し |
-| 3 | KER_CALL_EXIT | カーネルコールの戻り |
-| 4 | KER_CALL_INT | カーネルコールの割り込まれ |
-| 5 | INT | 割り込み |
-| 6 | THREAD | スレッドの状態の遷移・生成・破棄、仮想スレッド |
-| 7 | PROCESS | プロセスの生成・破棄・名前 |
-| 8 | SYSTEM | システムのイベント |
-| 9 | USER | ユーザーのイベント |
-| 10 | COMM | メッセージ・パルス |
-| 11 | QUIP | QUIP |
-| 12 | SEC | セキュリティ |
-| 13 | QVM | 仮想マシン |
-| 0xFFFF | UNKNOWN | 対応表に無い内部クラス(クラス 0 と未定義の番号)、種別の無い KER_CALL |
-
-### イベント
-
-- クラスごとのモジュール(`semantic_id::kercall`・`semantic_id::thread`・`semantic_id::system` など)に、意味(QNX の名前)ごとの番号を定数で置く。カーネルコールの番号などとは別の番号。
-- KER_CALL の enter / exit / int はクラスで区別し、イベント ID は共通(`semantic_id::kercall`)。
-- 64 ビット版(KER_CALL・SYSTEM)は別のイベント ID(`semantic_id::kercall::MSG_SENDV_64` など)。番号に意味を持たせない。
-  - KER_CALL は全コールに 64 ビット版の ID を置く。TableOfEvents に記載の無い 64 ビット版もカーネルは記録し、traceprinter は表示するため(実測: `MSG_SEND_PULSE` など)。
-  - SYSTEM はヘッダの `_NTO_TRACE_SYS_*_64` と TableOfEvents の `|_NTO_TRACE_KERCALL64` にあるものだけ。それ以外の 64 ビット版は UNKNOWN。
-  - def.rs の `KERCALLS_64`・`SYSTEM_EVENTS_64` が、内部イベント番号との対応を持つ。
+- semantic_id.rs に定数として定義する。版に依存しない。手で保守する。
+- 一度決めた番号は変えない・消さない。追加だけする(版のサポートを切っても消さない)。
+- イベントの種類は (class_id, event_id) の組で表す。event_id はクラスごとの番号。
+- KER_CALL の enter / exit / int はクラスで区別し、イベント ID は共通。64 ビット版(KER_CALL・SYSTEM)は別のイベント ID。
 - 番号が任意のイベント(USER・QUIP)は、内部イベント番号をそのまま event_id にする。
-- 対応表に無いものは UNKNOWN(`0xFFFF`)。
-
-### 表示文字列
-
-- `class_name()` / `event_name()` は、traceprinter が表示するクラス名・イベント名を返す。
-- 表示名は版で変わりうる(カーネルコールの番号など)ので、版を引数にとる。
+- 対応表に無いものは UNKNOWN。
+- 内部 ID ⇔ セマンティック ID の変換は版ごと(`qnx<版>/event_parser.rs` の `semantic_ids`・`internal_ids`)。対応表は def.rs が持つ。
+- 表示文字列(`class_name()`・`event_name()`)は traceprinter の表示で、版で変わりうるので版を引数にとる。セマンティック ID の定数名とは別のもの。
+- docs/semantic-id.md の一覧は生成部分で、試験(`semantic_id_doc_is_up_to_date`)が古くなっていないかを確かめる。
 
 ---
 
@@ -543,32 +631,15 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 
 ## 14. 試験
 
+詳細は docs/testing.md。
+
 | 種類 | 内容 | 実行 |
 |---|---|---|
-| 単体試験 | ヘッダ・merge・combine・CONTROL の点検・書式・セマンティック ID・合成データの枠 | `cargo test` |
+| 単体試験 | ヘッダ・merge・combine・CONTROL の点検・書式・SLOG2・セマンティック ID・定義の網羅・資料の一覧 | `cargo test` |
 | 合成データ | 生成器(全イベントの網羅、語が足りないイベント、窓、ORPHAN の位置、SLOG2、4 CPU の一周)と tests/kev/qnx<版>/data の小さな場面を、kevcsv.py で kev にして traceprinter の出力とバイト単位で比べる | `python tests/kev/tools/compare.py [--qnx 800]` |
 | 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取って同じく比べる。仕上げとして最後に行う | `python tests/kev/tools/compare.py --kev-dir <DIR>` |
+| 確認用のイベント一覧 | セマンティック ID ごとの定義・書式・TableOfEvents との違い・比較の結果 | `python tests/kev/tools/event_catalog.py --table <TableOfEvents>` |
 
-- 版は `--qnx`(省略時は最新の版)。traceprinter の場所は `--traceprinter` か環境変数 `TRACEHUB_TRACEPRINTER_<版>`(無ければ `TRACEHUB_TRACEPRINTER`)、実機の kev の置き場所は `--kev-dir` か `TRACEHUB_KEV_DIR_<版>`(無ければ `TRACEHUB_KEV_DIR`)。
-- traceprinter が無い環境: kev の横に同じ名前の正解 `X.tp.txt`(`traceprinter -n -f X.kev -o X.tp.txt` の出力)があれば、それと比べる。合成データは、traceprinter のある環境で compare.py を動かしたあとの `target/compare/qnx<版>/kev/`(kev と正解の組)を写して `--synthetic-dir` で渡す。正解も traceprinter も無い kev は SKIP。
+- 正解は traceprinter の出力。期待値をリポジトリに持たず、比べるたびに traceprinter を動かす。traceprinter の無い環境では、kev の横に置いた正解(`X.tp.txt`)と比べる。
 - 実機で取りにくいイベントは、合成データで確かめる。
 - traceprinter の出力と実機の kev は、リポジトリに入れない。
-
-### 確認用のイベント一覧
-
-```
-python tests/kev/tools/compare.py
-python tests/kev/tools/event_catalog.py [--qnx 800] --table <TableOfEvents.txt> [--kev-dir <DIR>]
-```
-
-`target/event_catalog/qnx<版>/` に、セマンティック ID ごとに 1 行の `events.csv` と、件数のまとめの `summary.md` を作る(TableOfEvents の文を含むので、リポジトリに入れない)。
-
-| 列 | 内容 |
-|---|---|
-| クラス・イベント・class_id・event_id・内部 ID | セマンティック ID と、対応する内部 ID |
-| 表示名 | traceprinter の表示クラス名・表示イベント名 |
-| fast の書式・wide の書式 | args.rs の書式(要素の並び。fast が無く wide を使うものは「wide と同じ」) |
-| 出力の例 | 合成 kev での出力(traceprinter と一致を確かめたもの) |
-| TableOfEvents | 対応するブロックの有無と、Fast・Wide の引数名 |
-| 引数名 | TableOfEvents の引数名と tracehub のラベルの違い(参考。traceprinter のラベルは TableOfEvents と違うことが多い) |
-| 合成 kev・実機 kev | 件数、traceprinter が行を出した件数、compare.py の結果 |

@@ -111,3 +111,161 @@ pub mod traceprinter {
         }
     }
 }
+
+/// docs/semantic-id.md の一覧(生成部分)が、semantic_id.rs と版ごとの定義に合っているかの試験。
+/// 合っていなければ失敗する。`TRACEHUB_UPDATE_DOCS=1 cargo test` で書き直す。版を足すときは VERSIONS と internal に足す。
+#[cfg(test)]
+mod semantic_id_doc {
+    use super::*;
+
+    const DOC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/semantic-id.md");
+    const BEGIN: &str =
+        "<!-- 生成部分ここから(cargo test が確かめる。書き直すときは TRACEHUB_UPDATE_DOCS=1 cargo test) -->\n";
+    const END: &str = "<!-- 生成部分ここまで -->";
+    const VERSIONS: &[(QnxVersion, &str)] = &[(QnxVersion::V800, "8.0")];
+
+    fn internal(v: QnxVersion, c: ClassId, e: EventId) -> Option<(u8, u16)> {
+        match v {
+            QnxVersion::V800 => qnx800::event_parser::internal_ids(c, e),
+        }
+    }
+    fn internal_class(v: QnxVersion, c: ClassId) -> Option<u8> {
+        match v {
+            QnxVersion::V800 => qnx800::event_parser::internal_class(c),
+        }
+    }
+
+    /// semantic_id.rs のイベントのモジュール: (モジュール名, 説明, [(定数名, 番号)])
+    type Module = (String, String, Vec<(String, u16)>);
+
+    fn modules() -> Vec<Module> {
+        let mut out: Vec<Module> = Vec::new();
+        let mut doc = String::new();
+        for line in include_str!("semantic_id.rs").lines() {
+            let t = line.trim();
+            if let Some(d) = t.strip_prefix("/// ") {
+                doc = d.to_string();
+            } else if let Some(m) = t.strip_prefix("pub mod ").and_then(|s| s.strip_suffix(" {")) {
+                out.push((m.to_string(), std::mem::take(&mut doc), Vec::new()));
+            } else if let (Some(m), Some((name, n))) = (
+                out.last_mut(),
+                t.strip_prefix("pub const ")
+                    .and_then(|r| r.split_once(": EventId = EventId(")),
+            ) {
+                m.2.push((name.to_string(), n.trim_end_matches(");").parse().unwrap()));
+            }
+        }
+        out
+    }
+
+    fn classes_of(m: &str) -> &'static [ClassId] {
+        match m {
+            "control" => &[ClassId::CONTROL],
+            "kercall" => &[ClassId::KER_CALL_ENTER, ClassId::KER_CALL_EXIT, ClassId::KER_CALL_INT],
+            "int" => &[ClassId::INT],
+            "thread" => &[ClassId::THREAD],
+            "process" => &[ClassId::PROCESS],
+            "system" => &[ClassId::SYSTEM],
+            "comm" => &[ClassId::COMM],
+            "sec" => &[ClassId::SEC],
+            "qvm" => &[ClassId::QVM],
+            _ => panic!("semantic_id.rs の {m} のクラスを classes_of に足す"),
+        }
+    }
+
+    fn generate() -> String {
+        use std::fmt::Write as _;
+        let dash = |s: Option<String>| s.filter(|s| !s.is_empty()).unwrap_or_else(|| "—".into());
+        let mut s = String::new();
+        let vh: String = VERSIONS
+            .iter()
+            .map(|(_, n)| format!(" QNX {n}: 内部クラス | QNX {n}: 表示クラス名 |"))
+            .collect();
+        let vs: String = VERSIONS.iter().map(|_| "---|---|").collect();
+        writeln!(s, "### クラス\n\n| class_id | 定数 |{vh}\n|---|---|{vs}").unwrap();
+        for &(name, c) in ClassId::ALL {
+            let cols: String = VERSIONS
+                .iter()
+                .map(|&(v, _)| {
+                    let ic = dash(internal_class(v, c).map(|x| x.to_string()));
+                    format!(" {ic} | {} |", dash(class_name(v, c).map(String::from)))
+                })
+                .collect();
+            writeln!(s, "| {} | `{name}` |{cols}", c.0).unwrap();
+        }
+        writeln!(
+            s,
+            "| {} | `UNKNOWN` |{}",
+            ClassId::UNKNOWN.0,
+            VERSIONS.iter().map(|_| " — | — |").collect::<String>()
+        )
+        .unwrap();
+        let mut total = 0;
+        for (m, doc, consts) in modules() {
+            let classes = classes_of(&m);
+            total += consts.len() * classes.len();
+            let cls: Vec<String> = classes.iter().map(|c| format!("`{}`", c.const_name())).collect();
+            writeln!(
+                s,
+                "\n### `{m}`: {doc}\n\nクラス: {}。{} 個。\n",
+                cls.join("・"),
+                consts.len()
+            )
+            .unwrap();
+            let mut head = "| event_id | 定数 |".to_string();
+            let mut sep = "|---|---|".to_string();
+            for &(v, n) in VERSIONS {
+                if classes.len() == 1 {
+                    head += &format!(" QNX {n}: 内部イベント番号 | QNX {n}: 表示名 |");
+                    sep += "---|---|";
+                } else {
+                    head += &format!(" QNX {n}: 内部イベント番号 |");
+                    sep += "---|";
+                    for c in classes {
+                        head += &format!(" QNX {n}: 表示名({}) |", class_name(v, *c).unwrap_or("?"));
+                        sep += "---|";
+                    }
+                }
+            }
+            writeln!(s, "{head}\n{sep}").unwrap();
+            for (name, n) in consts {
+                let e = EventId(n);
+                let mut row = format!("| {n} | `{m}::{name}` |");
+                for &(v, _) in VERSIONS {
+                    let codes: Vec<String> = classes
+                        .iter()
+                        .map(|&c| dash(internal(v, c, e).map(|(_, x)| format!("0x{x:03x}"))))
+                        .collect();
+                    row += &format!(" {} |", codes.join(" / "));
+                    for &c in classes {
+                        row += &format!(" {} |", dash(event_name(v, c, e)));
+                    }
+                }
+                writeln!(s, "{row}").unwrap();
+            }
+        }
+        writeln!(
+            s,
+            "\nイベントの定数 {} 個、クラスとの組み合わせ {total} 個(USER・QUIP の任意番号を除く)。",
+            modules().iter().map(|m| m.2.len()).sum::<usize>()
+        )
+        .unwrap();
+        s
+    }
+
+    #[test]
+    fn semantic_id_doc_is_up_to_date() {
+        let doc = std::fs::read_to_string(DOC).expect("docs/semantic-id.md");
+        let i = doc.find(BEGIN).expect("生成部分の始まりの印") + BEGIN.len();
+        let j = i + doc[i..].find(END).expect("生成部分の終わりの印");
+        let new = format!("{}{}{}", &doc[..i], generate(), &doc[j..]);
+        if new == doc {
+            return;
+        }
+        if std::env::var("TRACEHUB_UPDATE_DOCS").is_ok_and(|v| v == "1") {
+            std::fs::write(DOC, new).unwrap();
+        } else {
+            panic!("docs/semantic-id.md の一覧が古い。TRACEHUB_UPDATE_DOCS=1 cargo test で書き直す");
+        }
+    }
+}
