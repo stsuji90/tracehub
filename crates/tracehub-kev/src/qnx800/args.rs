@@ -341,6 +341,63 @@ pub const TABLES: &[(&str, Table)] = &[
     ("sec_able", TABLE_SEC_ABLE),
 ];
 
+// ---------------------------------------------------------------- SLOG2
+// SLOG の payloads が slog2 のレコードなら、traceprinter は SLOG2 という名前でレコードの文字列を出す。
+// 値はすべて traceprinter の振る舞いから決めた(ヘッダに定義は無い)。オフセットはレコード(payloads)の先頭からのバイト位置。
+// レコード: [0..2] SLOG2_MAGIC、[2..4] レコード長、[7] 種別、[20..] 本文。
+// 種別が書式なら、本文は NUL で終わる printf の書式、その後ろに引数(2 バイト揃えの u16 のヘッダ + データ)が並ぶ。
+
+/// SLOG2 として読む (内部クラス名, 内部イベント名)
+pub const SLOG2_EVENT: (&str, &str) = ("SYSTEM", "SLOG");
+/// 表示イベント名
+pub const SLOG2_NAME: &str = "SLOG2";
+/// レコードの先頭(リトルエンディアンの u16)。違えば SLOG の書式
+pub const SLOG2_MAGIC: u16 = 0xcfbd;
+/// レコード長(リトルエンディアンの u16、バイト単位)の位置
+pub const SLOG2_LEN_OFFSET: usize = 2;
+/// 種別(1 バイト)の位置
+pub const SLOG2_TYPE_OFFSET: usize = 7;
+/// 本文の位置。payloads がこれより短ければ SLOG の書式、レコード長がこれ以下なら空
+pub const SLOG2_BODY_OFFSET: usize = 20;
+/// レコード長の上限。超えるか payloads より長ければ空
+pub const SLOG2_MAX_RECORD: usize = 536;
+/// 種別: 文字列(本文のレコード長 - 1 バイトまでを NUL の手前まで出す)。それ以外の種別は空
+pub const SLOG2_TYPE_STRING: u8 = 0;
+/// 種別: 書式と引数
+pub const SLOG2_TYPE_FORMAT: u8 = 1;
+/// 種別が書式のときの、文字列の前置き
+pub const SLOG2_FORMAT_PREFIX: &str = "FA ";
+/// 書式の長さの上限(NUL を除く)。超えるか NUL がレコードに無ければ前置きだけ
+pub const SLOG2_MAX_FORMAT: usize = 511;
+/// 書式を当てはめた文字列の長さの上限(超えた分は切る)
+pub const SLOG2_MAX_OUTPUT: usize = 1023;
+/// 引数のヘッダの揃え(レコードの先頭から)
+pub const SLOG2_ARG_ALIGN: usize = 2;
+/// 引数のヘッダの、データが文字列であることを表すビット
+pub const SLOG2_ARG_STRING: u16 = 0x8000;
+/// 引数のヘッダの、データのバイト数のマスク
+pub const SLOG2_ARG_LEN_MASK: u16 = 0x7fff;
+/// 数として読めるデータのバイト数(リトルエンディアン)。ほかの長さは書式を当てはめられない
+pub const SLOG2_INT_SIZES: &[usize] = &[1, 2, 4, 8];
+/// 整数の変換の長さ修飾子とビット数(修飾子が無いときと L は SLOG2_INT_BITS)。traceprinter は Windows の
+/// 実行ファイルなので long は 32 ビット
+pub const SLOG2_LENGTHS: &[(&str, u32)] = &[
+    ("hh", 8),
+    ("h", 16),
+    ("ll", 64),
+    ("l", 32),
+    ("j", 64),
+    ("z", 64),
+    ("t", 64),
+    ("L", 32),
+];
+pub const SLOG2_INT_BITS: u32 = 32;
+/// %s・%c をワイド文字(UTF-16)にする長さ修飾子。1 バイトにならない文字(0xff より大きい)は、
+/// %s ではそこで終わり、%c では空になる(traceprinter の C ロケールの変換)
+pub const SLOG2_WIDE_LENGTHS: &[&str] = &["l", "ll", "j", "z", "t"];
+/// %p(フラグ・幅・精度・長さ修飾子の無いもの)の桁数(0 で埋めた 16 進)
+pub const SLOG2_POINTER_DIGITS: usize = 16;
+
 // ---------------------------------------------------------------- 後ろに空行を入れるイベント
 pub const BLANK_AFTER: &[(&str, &str)] = &[("CONTROL", "BUFFER"), ("CONTROL", "BUFFER_END"), ("CONTROL", "DROPPED")];
 

@@ -93,13 +93,16 @@ pub enum CombineStatus {
     Orphan,
 }
 
-/// traceprinter が何かを出力するか
+/// traceprinter の出力での扱い
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DisplayStatus {
-    /// イベントの行、または診断の行(TRUNC・ORPHAN・UNKNOW)を出力する
+    /// イベントの行、または診断の行(TRUNC・ORPHAN)を出力する
     Display,
-    /// 何も出力しない
+    /// 定義のあるイベントで、何も出力しない
     Silent,
+    /// 定義の無いイベント(class_id か event_id が UNKNOWN)で、イベントの行を出力しない。
+    /// traceprinter は何も出力しない(定義の無いクラスだけは UNKNOW の診断の行を出力する)
+    Unknown,
 }
 
 /// 見つかった異常 1 件

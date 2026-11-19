@@ -69,6 +69,7 @@ tracehub/
           args.rs              traceprinter の表示の定義(手で保守)
           event_parser.rs      スロットの読み取りからイベントの列まで(§6)
           event_decoder.rs     TraceEvent → 表示文字列(§7)
+          slog2.rs             SLOG2 の表示文字列(§7.4)
           traceprinter.rs      traceprinter 互換出力(§9)
           scenarios.rs         試験用の合成データの生成(§14)
       examples/scenarios.rs    合成データを CSV で書く
@@ -179,7 +180,7 @@ pub struct TraceEvent {
 }
 
 pub enum CombineStatus { Complete, Truncated, Orphan }
-pub enum DisplayStatus { Display, Silent }
+pub enum DisplayStatus { Display, Silent, Unknown }
 ```
 
 | combine_status | 意味 | payloads |
@@ -190,8 +191,13 @@ pub enum DisplayStatus { Display, Silent }
 
 | display_status | 意味 |
 |---|---|
-| `Display` | traceprinter が何かを出力するもの(イベントの行、または TRUNC・ORPHAN・UNKNOW の行) |
-| `Silent` | traceprinter が何も出力しないもの(header が 0 のスロット、書式で出力しないと決まっているイベント、書式の無いイベントなど) |
+| `Display` | traceprinter がイベントの行、または TRUNC・ORPHAN の診断の行を出力するもの |
+| `Silent` | 定義のあるイベントで、traceprinter が何も出力しないもの(header が 0 のスロット、書式で出力しないと決まっているイベント、語の足りないイベントなど) |
+| `Unknown` | 定義の無いイベント(class_id か event_id が UNKNOWN)で、traceprinter がイベントの行を出さないもの。traceprinter は何も出力しない(定義の無いクラスだけは UNKNOW の診断の行を出す)。header が 0 のスロットは Silent |
+
+- 決める順: Orphan → Display、イベントの行を出す → Display、定義の無いイベント → Unknown、TRUNC の行を出す → Display、それ以外 → Silent。
+- 定義の無いイベントでも traceprinter がイベントの行を出すもの(SEC の `unknown(番号)`、USER・QUIP の任意番号など)は Display。
+- traceprinter は、定義のあるクラスの定義の無いイベント(例: 古い trace.h にある SYSTEM の `_NTO_TRACE_SYS_SEND_IPI`(0x20)とその 64 ビット版)には何も出さない(実測)。tracehub の traceprinter 互換出力も何も書かず、display_status を Unknown にして区別できるようにする。
 
 - traceprinter の診断の行(TRUNC・ORPHAN・UNKNOW)はスロットの words を表示する。tracehub は先頭スロットの words を TraceEvent のフィールド(構造・CPU・フラグ・内部 ID・時刻・payloads)から組み直す。構造は、Orphan なら DiagInfo の `structure`(CC / CE)、組(Complete で 3 語以上、または Truncated)なら CB、それ以外は S。
 - 時刻は組では CB(Orphan ではそのスロット)の時刻。
@@ -307,7 +313,7 @@ merge した順にスロットを処理し、項目を待ち行列に入れて�
 ### 6.7 セマンティック ID と display_status
 
 - 版の定義(def.rs の表)で、(内部クラス, 内部イベント番号) → (class_id, event_id) を引く。無ければ UNKNOWN(§8)。
-- display_status は、traceprinter がイベントの行または診断の行を出すかで決める(event_decoder の書式の選択と同じ規則)。
+- display_status は、traceprinter がイベントの行または診断の行を出すかと、定義の有無で決める(§5.3。イベントの行は event_decoder の書式の選択と同じ規則)。
 
 ---
 
@@ -323,7 +329,8 @@ merge した順にスロットを処理し、項目を待ち行列に入れて�
   - payloads が 2 語以下(S と、CB だけで途切れた組)→ fast の書式
   - それ以外 → wide の書式
 - 引数の名前は traceprinter の表示(QNX の名前)のまま。
-- traceprinter が行を出さないもの(Silent、Orphan、定義の無いもの)は、名前が決まればその名前、決まらなければ `UNKNOWN(内部クラス)` と内部イベント番号を返し、args は payloads を 16 進で並べる。
+- SYSTEM の SLOG の payloads が slog2 のレコードなら、表示イベント名は `SLOG2`、args はレコードの文字列(§7.4)。
+- traceprinter が行を出さないもの(Silent、Unknown、Orphan)は、名前が決まればその名前、決まらなければ `UNKNOWN(内部クラス)` と内部イベント番号を返し、args は payloads を 16 進で並べる。
 
 ### 7.2 欠けた payloads の表し方(`DecodeOptions::missing`)
 
@@ -338,6 +345,51 @@ merge した順にスロットを処理し、項目を待ち行列に入れて�
 
 args.rs はイベントごとに、書式の要素(`h`・`d`・`u`・`q`・`e`・`s`・`sz`・`t`・`flags`・`dump`)の並びを fast と wide について書く。
 テンプレート(`t`)は `{u0}`・`{x0:08}`・`{q0}` などで payloads を参照する。詳しくは tp_format.rs の先頭のコメント。
+
+### 7.4 SLOG2
+
+SYSTEM の SLOG の payloads に slog2 のレコードが入っていると、traceprinter は `SLOG2` という名前で、レコードの文字列を出す。規則はすべて traceprinter の振る舞いから決めた(合成データで確かめた)。定数は args.rs の SLOG2 の節、手順は slog2.rs。
+
+```
+t:0x00000110 CPU:00 SYSTEM          :SLOG2             FA connect(62)[tid:5]: pid 1234 proc=server 1234 client 00000012345678d0
+```
+
+レコード(payloads をリトルエンディアンのバイト列にしたもの。オフセットはその先頭から):
+
+| オフセット | 長さ | 内容 |
+|---|---|---|
+| 0 | 2 | `0xcfbd`(u16)。違えば SLOG の書式 |
+| 2 | 2 | レコード長(u16、バイト) |
+| 7 | 1 | 種別: 0 = 文字列、1 = 書式と引数 |
+| 20 | | 本文 |
+
+- payloads が 20 バイトより短ければ SLOG の書式(S のスロットの SLOG はいつも SLOG)。64 ビット版の番号は SLOG2 として読まない(行を出さない)。
+- ほかのバイト(1〜6 の残り、8〜19)は表示に使わない。
+- レコード長が 20 以下、536 より大きい、payloads より長い → 名前だけで、文字列は空。
+- 種別が文字列 → 本文のレコード長 − 1 バイトまでを、NUL の手前まで出す。
+- 種別が書式と引数 → `FA ` の後ろに、書式を当てはめた文字列を出す。
+  - 書式は本文から NUL まで。NUL がレコードに無いか 511 バイトより長ければ `FA ` だけ。
+  - 引数は書式の NUL の後ろから、2 バイト揃えで並ぶ。各引数は u16 のヘッダ(ビット 15 = 文字列、下位 15 ビット = データのバイト数)とデータ。
+  - 当てはめられない(引数が足りない、型が合わない、扱わない変換)ときは、書式をそのまま出す。余った引数は使わない。
+  - 当てはめた文字列は、最初の NUL の手前まで、1023 バイトまで。
+- 種別がほか → 文字列は空。
+- 文字列の中のバイトはそのまま出す(制御文字・非 ASCII も)。改行は traceprinter 互換出力では CRLF になる(traceprinter がテキストモードで書くため)。
+
+書式の当てはめは C の printf と同じ。traceprinter は Windows の実行ファイルなので `long` は 32 ビット。C と違うところ・決めたところ:
+
+| 項目 | 規則 |
+|---|---|
+| 変換 | `d i u x X o p c s f F e E g G a A` と `%%`。ほか(`n`・`q`・`Z`・`C`・`S`・`I64` など)は当てはめられない |
+| フラグ・幅・精度 | フラグは `-+ #0`。幅・精度は数字だけ(`*`・`$` は当てはめられない)。`.` の後ろに数字が無い、`%` の前にフラグなどがある、末尾の `%` は当てはめられない |
+| 数の引数 | データが 1・2・4・8 バイトのもの。d・i では 4 バイトを符号拡張、ほかは 0 で拡張。ほかの長さは当てはめられない(16 バイトは traceprinter が不定の値を出すので再現しない) |
+| 長さ修飾子 | 整数は `hh` 8・`h` 16・`l` 32・`ll`・`j`・`z`・`t` 64 ビット、無しと `L` は 32 ビット。浮動小数点では無視 |
+| %s | 引数は文字列でも数でもよい。データの最後のバイトが NUL でなければ当てはめられない。最初の NUL まで |
+| %ls など | `l`・`ll`・`j`・`z`・`t` の %s・%c はワイド文字(UTF-16)。%ls はデータの先頭から(データの後ろも続けて)、0 か 0xff より大きい文字の手前まで。%lc は下位 16 ビットで、0xff より大きければ空 |
+| %c | 数の下位 8 ビット。0 なら文字列はそこで終わる。文字列の引数は当てはめられない |
+| %p | フラグ・幅・精度・長さ修飾子が無ければ 0 で埋めた 16 桁の 16 進(小文字)。あれば `%llx` と同じ(`#` で `0x`) |
+| %u | 空白のフラグで前に空白を付ける(`+` は付けない) |
+| %#o | 値が 0 でなく、桁が 0 で始まらないときだけ前に 0 を付ける(`%#.0o` の 0 は空) |
+| 浮動小数点 | 0 で拡張した 64 ビットを double のビット列として読む。NaN には `-` を付けない。`%a` の非正規化数は `0x0.…p-1022` |
 
 ---
 
@@ -424,6 +476,8 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 | `ORPHAN` | 1022 イベント前(下記) | merge した順のスロットの通し番号、構造(CC / CE)、スロットの 4 words |
 | `UNKNOW` | 定義の無いクラスのイベントの行の直前(途切れた組なら TRUNC の後)。クラス 0・イベント 0 には出さない | header と timestamp_cycles_low32 |
 
+- 定義のあるクラスの定義の無いイベントには、traceprinter は UNKNOW の行も出さない(§5.3 の Unknown)。
+
 - 行の書式は args.rs が持つ。番号と位置は parse() が DiagInfo に入れ、traceprinter.rs は TraceEvent と DiagInfo から行を作る。
 - ORPHAN 行の位置: traceprinter はイベントの行を 1022 件ためてから書くので、ORPHAN 行は「それまでに出た orphan を除くイベントの数 − 1022」件目の後(0 件未満なら先頭)に出る。DiagInfo の `display_before` はその次のイベントの events の番号。
 - 診断の行の words は、TraceEvent から組み直す(§5.3)。
@@ -486,7 +540,7 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 | 種類 | 内容 | 実行 |
 |---|---|---|
 | 単体試験 | ヘッダ・merge・combine・CONTROL の点検・書式・セマンティック ID・合成データの枠 | `cargo test` |
-| 合成データ | 生成器(全イベントの網羅、語が足りないイベント、窓、ORPHAN の位置、4 CPU の一周)と tests/kev/data の小さな場面を、kevcsv.py で kev にして traceprinter の出力とバイト単位で比べる | `python tests/kev/tools/compare.py` |
+| 合成データ | 生成器(全イベントの網羅、語が足りないイベント、窓、ORPHAN の位置、SLOG2、4 CPU の一周)と tests/kev/data の小さな場面を、kevcsv.py で kev にして traceprinter の出力とバイト単位で比べる | `python tests/kev/tools/compare.py` |
 | 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取って同じく比べる。仕上げとして最後に行う | `python tests/kev/tools/compare.py --kev-dir <DIR>` |
 
 - traceprinter の場所は `--traceprinter` か環境変数 `TRACEHUB_TRACEPRINTER`、実機の kev の置き場所は `--kev-dir` か `TRACEHUB_KEV_DIR`。

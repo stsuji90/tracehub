@@ -33,7 +33,7 @@ pub fn parse(bytes: &[u8]) -> Result<KevFile, KevError> {
 
 /// イベント 1 件の表示文字列(traceprinter -n と同じ書式)。
 ///
-/// traceprinter が行を出さないイベント(Silent、orphan、定義の無いもの)は、
+/// traceprinter が行を出さないイベント(Silent・Unknown・Orphan)は、
 /// 名前が決まればその名前、決まらなければ `UNKNOWN(内部クラス)` と内部イベント番号を返し、args は payloads の 16 進の並び。
 pub fn decode(version: QnxVersion, event: &TraceEvent, opts: &DecodeOptions) -> DecodedEvent {
     let missing = match opts.missing {

@@ -167,7 +167,16 @@ fn diag_line(tpl: &str, n: u64, ev: &TraceEvent, raw: &[u32; 4]) -> String {
         .replace("{raw}", &hex(raw))
 }
 
-/// 1 文字 1 バイト(latin-1)のバイト列にする
+/// 1 文字 1 バイト(latin-1)のバイト列にする。行の中の改行(SLOG2 の文字列など)は、traceprinter が
+/// テキストモードで書くのと同じく LINE_END にする
 fn latin1(s: &str) -> Vec<u8> {
-    s.chars().map(|c| c as u32 as u8).collect()
+    let mut out = Vec::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '\n' {
+            out.extend_from_slice(args::LINE_END.as_bytes());
+        } else {
+            out.push(c as u32 as u8);
+        }
+    }
+    out
 }

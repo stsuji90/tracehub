@@ -6,6 +6,7 @@
 //! | short_words | 語が足りないイベント(S・CB だけ・CB CC で途切れた組) |
 //! | combine_window | 組み立て中の組の後ろにたまる項目の数の境目(窓) |
 //! | orphan_lookahead | 多数のイベントの後の orphan(ORPHAN 行の位置) |
+//! | slog2 | SLOG2 のレコードの規則と printf の変換 |
 //! | sched_wrap | 4 CPU・下位 32 ビットの一周(TIME あり)・CPU 間の同時刻 |
 //! | sched_wrap_inferred | 同じ列で、一周のときの TIME が無い |
 
@@ -22,6 +23,7 @@ pub fn scenarios() -> Vec<(&'static str, String)> {
         ("short_words", to_csv(1, &short_words())),
         ("combine_window", to_csv(2, &combine_window())),
         ("orphan_lookahead", to_csv(1, &orphan_lookahead())),
+        ("slog2", to_csv(1, &pack(&slog2_events(), MAX_BUFFER_SLOTS, true))),
     ];
     let sched = sched_events(4, 3000);
     out.push(("sched_wrap", to_csv(4, &pack(&sched, MAX_BUFFER_SLOTS, true))));
@@ -573,6 +575,461 @@ fn orphan_lookahead() -> Vec<Slot> {
     out
 }
 
+/// SLOG2 の引数(数はバイト数と値、文字列はデータそのまま)
+enum P {
+    I(usize, i64),
+    S(&'static [u8]),
+}
+
+/// SLOG2 のレコード(種別は書式)。レコード長は実際の長さ
+fn slog2_record(fmt: &[u8], params: &[P]) -> Vec<u8> {
+    let mut r = vec![0u8; args::SLOG2_BODY_OFFSET];
+    r[..2].copy_from_slice(&args::SLOG2_MAGIC.to_le_bytes());
+    r[4..7].copy_from_slice(&[0xb7, 0x70, 0x04]); // 読まれないバイト
+    r[args::SLOG2_TYPE_OFFSET] = args::SLOG2_TYPE_FORMAT;
+    r.extend_from_slice(fmt);
+    r.push(0);
+    for p in params {
+        r.resize(r.len().next_multiple_of(args::SLOG2_ARG_ALIGN), 0);
+        let (h, d) = match p {
+            P::I(n, v) => (
+                *n as u16,
+                (0..*n).map(|k| v.to_le_bytes().get(k).copied().unwrap_or(0)).collect(),
+            ),
+            P::S(s) => (s.len() as u16 | args::SLOG2_ARG_STRING, s.to_vec()),
+        };
+        r.extend_from_slice(&h.to_le_bytes());
+        r.extend_from_slice(&d);
+    }
+    set_len(&mut r, None);
+    r
+}
+
+/// レコード長を書く(None なら実際の長さ)
+fn set_len(r: &mut [u8], len: Option<usize>) {
+    let n = len.unwrap_or(r.len()) as u16;
+    r[args::SLOG2_LEN_OFFSET..args::SLOG2_LEN_OFFSET + 2].copy_from_slice(&n.to_le_bytes());
+}
+
+fn to_words(b: &[u8]) -> Vec<u32> {
+    let mut b = b.to_vec();
+    b.resize(b.len().next_multiple_of(4), 0);
+    b.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect()
+}
+
+/// SLOG2: レコードの規則(先頭・長さ・種別・上限)と printf の変換(フラグ・幅・精度・長さ修飾子・型の不一致)
+fn slog2_events() -> Vec<SynEvent> {
+    use P::{I, S};
+    let f = |v: f64| I(8, v.to_bits() as i64);
+    let i4 = |v: i64| I(4, v);
+    let i8 = |v: i64| I(8, v);
+    let mut recs: Vec<Vec<u8>> = Vec::new();
+    let mut add = |fmt: &[u8], p: &[P]| recs.push(slog2_record(fmt, p));
+    add(
+        b"%s(%d)[tid:%d]: pid %d proc=%s client %p",
+        &[
+            S(b"connect\0"),
+            i4(62),
+            i4(5),
+            i4(1234),
+            S(b"server 1234\0"),
+            i8(0x12_3456_78d0),
+        ],
+    );
+    add(b"hello", &[]);
+    add(
+        b"%d %i %u|%d %u|%x %X %o",
+        &[i4(-5), i4(-6), i4(-7), i8(-5), i8(-7), i4(255), i4(255), i4(8)],
+    );
+    add(
+        b"[%5d][%-5d][%05d][%.3s][%10s][%-10s]",
+        &[i4(42), i4(42), i4(42), S(b"abcdef\0"), S(b"ab\0"), S(b"ab\0")],
+    );
+    add(b"%c%c 100%% %p %p", &[I(1, 65), i4(66), i8(0x1234), i4(0x5678)]);
+    // 引数が足りない・型が合わない・扱わない長さ
+    add(b"%s", &[i4(7)]);
+    add(b"%d", &[S(b"str\0")]);
+    add(b"%d %d", &[i4(1)]);
+    add(b"%d", &[I(3, 0x10203)]);
+    add(b"%s", &[S(b"noterm")]);
+    add(b"[%s]", &[S(b"")]);
+    add(b"[%s]", &[I(1, 0x41)]);
+    add(b"[%s|%s|%s]", &[I(2, 0x41), i8(0x6162), I(1, 0)]);
+    add(b"[%c|%p|%x|%f]", &[S(b"Q\0")]);
+    add(b"[%d]", &[I(0, 0)]);
+    add(b"[%d]", &[I(5, 1)]);
+    add(b"[%d]", &[I(32, 2)]);
+    add(b"e%d", &[i4(1), i4(2)]);
+    add(b"e%d", &[i4(1), S(b"zz\0")]);
+    add(b"plain", &[i4(1)]);
+    // 長さ修飾子
+    add(
+        b"%ld %lld %lu %llx %hd %hhu",
+        &[i8(-1), i8(-2), i8(3), i8(0xabc), I(2, -4), I(1, 200)],
+    );
+    add(b"[%ld %lld %lu]", &[i4(-1), i4(-1), i4(-1)]);
+    add(b"[%hhd %hd %hhx]", &[i4(0x1ff), i4(0x1ffff), i4(0x1ff)]);
+    add(
+        b"[%lld %llu %llx|%lld %llu %hd %hu|%lld %llx]",
+        &[
+            i4(-1),
+            i4(-1),
+            i4(0x8000_0000),
+            I(2, -1),
+            I(1, -1),
+            I(2, -1),
+            I(2, -1),
+            I(1, -1),
+            I(1, 0x80),
+        ],
+    );
+    add(
+        b"[%d %u %x|%zx %zd %jx %tx %lx %Lx]",
+        &[
+            i4(0x8000_0000),
+            i4(0x8000_0000),
+            i4(0x8000_0000),
+            i8(-1),
+            i8(-1),
+            i8(-1),
+            i8(-1),
+            i8(-1),
+            i8(-1),
+        ],
+    );
+    add(
+        b"[%jd|%td|%zd|%ju|%tu|%zu]",
+        &[i4(-1), i4(-1), i4(-1), i4(-1), i4(-1), i4(-1)],
+    );
+    add(
+        b"[%ld|%lu|%li|%lx|%lli|%llo]",
+        &[
+            i8(0x1_0000_0001),
+            i8(0x1_0000_0001),
+            i8(0x1_0000_0001),
+            i8(0x1_0000_0001),
+            I(1, 0x80),
+            I(2, 0x8000),
+        ],
+    );
+    add(
+        b"[%o %X][%hhu|%hu|%hhx|%hx|%ho]",
+        &[i8(-1), i8(-1), i4(0x1ff), i4(0x1ffff), i8(-1), i8(-1), i8(-1)],
+    );
+    add(
+        b"[%p %p %p][%c][%c]",
+        &[I(1, 0xff), I(2, 0xffff), i8(-1), i8(0x4142), i4(0x1ff)],
+    );
+    // フラグ・幅・精度
+    add(
+        b"[%#x %+d % d %08.3f][%zu %jd %td]",
+        &[i4(255), i4(5), i4(5), i8(0), i8(1), i8(2), i8(3)],
+    );
+    add(b"[%p %#p %10p %-20p|]", &[i4(-1), i4(1), i4(1), i4(1)]);
+    add(
+        b"[%+s %#o %#X % x][%2c|%-2c]",
+        &[S(b"a\0"), i4(8), i4(255), i4(1), i4(0x41), i4(0x42)],
+    );
+    add(
+        b"[%.4p|%020p|%#20p|%#p|%-p|%+p|% p|%0p|%1p|%.0p]",
+        &[i8(0), i8(0), i8(0), i8(0), i8(0), i8(0), i8(0), i8(0), i8(0), i8(0)],
+    );
+    add(b"[%lp %hp %llp %zp]", &[i8(0x41), i8(0x41), i8(0x41), i8(0x41)]);
+    add(
+        b"[%#x|%#o|%#.0o|%.0d|%.0x|%#.3x|%#08x|%#.8x]",
+        &[i8(0), i8(0), i8(0), i4(0), i8(0), i8(0), i8(0), i8(0)],
+    );
+    add(
+        b"[%-05d|%+05d|% 05d|%+ d|%-+#0 8.3d|%000005d|%.10d|%0d]",
+        &[i4(42), i4(42), i4(42), i4(42), i4(42), i4(42), i4(42), i4(3)],
+    );
+    add(
+        b"[%#5c|%.3c|%05c|%-05c][%05s|%#s|%-.3s|%010s|%-010s]",
+        &[
+            i4(0x41),
+            i4(0x41),
+            i4(0x41),
+            i4(0x41),
+            S(b"abcdef\0"),
+            S(b"abcdef\0"),
+            S(b"abcdef\0"),
+            S(b"ab\0"),
+            S(b"ab\0"),
+        ],
+    );
+    add(
+        b"[%#5x|%-#8o|%#X|%08.3d|%-8.3x|%+u|% u][%5.2d]",
+        &[i4(255), i4(8), i4(0), i4(-5), i4(10), i4(1), i4(1), i4(3)],
+    );
+    add(
+        b"[%.0d|%+.0d|% .0d|%5.0d][%#o|%#.0o|%#5o]",
+        &[i4(0), i4(0), i4(0), i4(0), i4(0), i4(0), i4(8)],
+    );
+    add(
+        b"[% u|% llu|% 5u|%- 5u|% 05u|% hu|% hhu|%+ u|% lu|% zu|%#u|% .3u|% .0u]",
+        &[
+            i4(7),
+            i8(-1),
+            i4(7),
+            i4(7),
+            i4(7),
+            i4(-1),
+            i4(-1),
+            i4(0),
+            i4(-1),
+            i8(-1),
+            i4(7),
+            i4(7),
+            i4(0),
+        ],
+    );
+    add(
+        b"[% x|% o|% X|%+x|% p|% i|%+i|% i]",
+        &[i4(7), i4(7), i4(7), i4(7), i4(7), i4(7), i4(0), i4(-1)],
+    );
+    add(b"[%99999d]", &[i4(1)]);
+    add(b"[%.99999d]", &[i4(1)]);
+    add(b"[%300d][%490d]", &[i4(1), i4(1)]);
+    // 扱わない書き方
+    for fmt in [
+        &b"[%.d]"[..],
+        b"[% %d]",
+        b"[%5%]",
+        b"[%-%]",
+        b"abc %d%",
+        b"abc%",
+        b"[%*d]",
+        b"[%1$d]",
+        b"[%n%q%]",
+        b"[%I64d]",
+        b"[%qd]",
+        b"[%Zd]",
+        b"[%Cd]",
+        b"[%S]",
+        b"[%C]",
+        b"[%hn]",
+        b"[%D]",
+        b"[%U]",
+        b"[%O]",
+        b"[%b]",
+        b"[%m]",
+        b"[%ls %lc]",
+    ] {
+        add(fmt, &[i8(0x41), i8(0x41)]);
+    }
+    add(
+        b"[%Lf %lf %llf %hf %jf][%hs %ls %lls %hc %lc %hhs][%%%d]",
+        &[
+            i8(0x41),
+            i8(0x41),
+            i8(0x41),
+            i8(0x41),
+            i8(0x41),
+            S(b"A\0"),
+            S(b"A\0"),
+            S(b"A\0"),
+            i8(0x41),
+            i8(0x41),
+            S(b"A\0"),
+            i8(0x41),
+        ],
+    );
+    // 浮動小数点
+    for v in [
+        0.0,
+        5e-324,
+        1.0,
+        100.0,
+        1e-6,
+        1e23,
+        -0.0,
+        f64::MAX,
+        0.1,
+        10.0,
+        1e4,
+        1e6,
+        1e-4,
+        f64::MIN_POSITIVE,
+        -f64::NAN,
+        f64::NEG_INFINITY,
+    ] {
+        add(
+            b"[%f|%e|%g|%a|%.3g|%#g|%G|%.0g|%.15g|%.17g]",
+            &[f(v), f(v), f(v), f(v), f(v), f(v), f(v), f(v), f(v), f(v)],
+        );
+    }
+    add(b"[%f %e %G %E %F %A]", &[i4(1), i4(1), i4(1), i4(1), i4(1), i4(1)]);
+    add(
+        b"[%.2f %10.3e][%#g %#.0f %.0e %.20f %g %.3g %10.4g]",
+        &[
+            f(-2.0),
+            f(-1.0),
+            f(1.2345),
+            f(1.2345),
+            f(1.2345),
+            f(1.2345),
+            f(1.2345),
+            f(1.2345),
+            f(1.2345),
+        ],
+    );
+    add(b"[%.100f]", &[f(1.2345)]);
+    add(
+        b"[%F %F %E %+f % f %+e]",
+        &[
+            f(f64::INFINITY),
+            f(f64::NAN),
+            f(f64::INFINITY),
+            f(f64::NAN),
+            f(f64::NAN),
+            f(-f64::NAN),
+        ],
+    );
+    add(
+        b"[%10f|%-10.2f|%010.2f|%+.1f|% .1f|%010f]",
+        &[f(1.5), f(1.5), f(1.5), f(1.5), f(1.5), f(f64::NEG_INFINITY)],
+    );
+    add(
+        b"[%.1a|%.0a|%.3a|%10a|%#a|%.0A]",
+        &[f(1.5), f(1.5), f(0.1), f(1.5), f(1.0), f(1.5)],
+    );
+    add(
+        b"[%g|%g|%g|%.0g|%#.3g|%.2g|%G]",
+        &[f(1e8), f(0.001), f(1e-4), f(0.5), f(100.0), f(99.5), f(1e-7)],
+    );
+    add(
+        b"[%.2e|%.0f|%.0f|%.0f|%.1f]",
+        &[f(99.5), f(0.5), f(1.5), f(2.5), f(0.1)],
+    );
+    add(b"[% f|% e|% g|% a]", &[i8(-1), i4(7), i4(-1), i4(7)]);
+    // ワイド文字(%ls・%lc など)と、%s のデータの最後の NUL
+    for m in ["l", "ll", "j", "z", "t", "L", "h", "hh"] {
+        let fmt = format!("[%{m}s|%{m}s|%{m}c|%{m}c]");
+        add(fmt.as_bytes(), &[S(b"A\0B\0\0\0"), I(2, 0x41), i4(0x41), i4(0xe9)]);
+        add(format!("[%{m}c]").as_bytes(), &[S(b"A\0")]);
+    }
+    add(
+        b"[%ls|%ls|%ls|%ls|%ls]",
+        &[
+            S(b"A\0\x42\x30B\0\0\0"),
+            S(b"A\0\x00\x01B\0\0\0"),
+            S(b"A\0\xff\x00B\0\0\0"),
+            S(b"\0"),
+            S(b"A\0\0"),
+        ],
+    );
+    add(b"[%ls]%d", &[S(b"A\0"), i4(0x0043_0042)]);
+    add(b"[%lls]|", &[S(b"A\0B\0")]);
+    add(
+        b"[%.1lls|%5lls|%-5lls]",
+        &[S(b"A\0B\0\0\0"), S(b"A\0\0\0"), S(b"A\0\0\0")],
+    );
+    add(b"[%lc|%lc|%c|%hc]", &[i4(0x1ff), i4(0x3042), i4(0x3042), i4(0x3042)]);
+    for bad in [&b"A\0\0B"[..], b"A\0B", b""] {
+        add(b"[%ls]", &[S(bad)]);
+    }
+    add(b"[%s]", &[S(b"a\0b")]);
+    add(b"[%s|%s]", &[i4(0x6300_6261), i4(0x6261)]);
+    // 文字列そのもの(制御文字・改行・NUL)
+    add(b"tab\there\nnl a\r\nb", &[]);
+    add(b"\xe3\x81\x82 \x01\x7f\x80\xff", &[]);
+    add(b"[%s][%s]", &[S(b"a\x01b\xe3\x81\x82\x7f\x80\xff\0"), S(b"ab\0cd\0")]);
+    add(b"[%s][%c][%c]", &[S(b"a\nb\0"), i4(10), i4(0)]);
+    // 長さの上限(書式 511 / 512 バイト、レコード 536 / 537 バイト、出力 1023 バイト)
+    for n in [511usize, 512] {
+        add(&vec![b'z'; n], &[]);
+    }
+    let text = |n: usize, c: u8| -> &'static [u8] {
+        let mut v = vec![c; n];
+        v.push(0);
+        Box::leak(v.into_boxed_slice())
+    };
+    for n in [507usize, 508, 509, 510] {
+        add(b"%s", &[S(text(n, b'q'))]);
+    }
+    add(b"%s%s", &[S(text(250, b'y')), S(text(250, b'y'))]);
+    add(b"%s%s", &[S(text(300, b'y')), S(text(300, b'y'))]);
+
+    // レコードの規則
+    let base = slog2_record(b"L%d", &[i4(7)]);
+    let mut raw = |r: Vec<u8>| recs.push(r);
+    for t in [0u8, 1, 2, 3, 0x10, 0x81, 0xff] {
+        let mut r = base.clone();
+        r[args::SLOG2_TYPE_OFFSET] = t;
+        raw(r);
+    }
+    // 先頭・レコード長・種別のほかのバイトは読まれない
+    for k in [4usize, 5, 6, 8, 12, 16, 19] {
+        let mut r = base.clone();
+        r[k] ^= 0x55;
+        raw(r);
+    }
+    for magic in [0xcfbcu16, 0xcfbf, 0xcebd, 0x4fbd, 0x0000, 0xffff] {
+        let mut r = base.clone();
+        r[..2].copy_from_slice(&magic.to_le_bytes());
+        raw(r);
+    }
+    for len in [0usize, 4, 19, 20, 21, 22, 23, 24, 26, 28, 29, 31, 32, 34, 130] {
+        let mut r = base.clone();
+        set_len(&mut r, Some(len));
+        raw(r);
+    }
+    let mut text = base.clone();
+    text[args::SLOG2_TYPE_OFFSET] = args::SLOG2_TYPE_STRING;
+    text.truncate(args::SLOG2_BODY_OFFSET);
+    text.extend_from_slice(b"plain%d\nx\0");
+    for len in [None, Some(22), Some(21), Some(20), Some(0), Some(40)] {
+        let mut r = text.clone();
+        set_len(&mut r, len);
+        raw(r);
+    }
+    for total in [535usize, 536, 537] {
+        let mut r = text.clone();
+        r.truncate(args::SLOG2_BODY_OFFSET);
+        r.resize(total - 1, b'r');
+        r.push(0);
+        set_len(&mut r, None);
+        raw(r);
+    }
+    // 引数のヘッダの揃え
+    let mut odd = base.clone();
+    odd.truncate(args::SLOG2_BODY_OFFSET);
+    odd.extend_from_slice(b"ab%d\0");
+    for pad in [0usize, 1, 3] {
+        let mut r = odd.clone();
+        r.resize(r.len() + pad, 0);
+        r.extend_from_slice(&4u16.to_le_bytes());
+        r.extend_from_slice(&5i32.to_le_bytes());
+        set_len(&mut r, None);
+        raw(r);
+    }
+    // payloads が短い(S・2 語・4 語)
+    raw(base[..8].to_vec());
+    raw(base[..16].to_vec());
+
+    let (system, slog) = code("SYSTEM", "SLOG");
+    let mut out: Vec<SynEvent> = recs
+        .iter()
+        .enumerate()
+        .map(|(i, r)| SynEvent {
+            cpu: 0,
+            cycle: 0x100 + 0x10 * i as u64,
+            class: system,
+            event: slog,
+            words: to_words(r),
+        })
+        .collect();
+    // 64 ビット版の番号は SLOG2 として読まない(行を出さない)
+    out.push(SynEvent {
+        cpu: 0,
+        cycle: 0x100 + 0x10 * out.len() as u64,
+        class: system,
+        event: slog | def::BIT64,
+        words: to_words(&base),
+    });
+    out
+}
+
 /// 複数 CPU・下位 32 ビットの一周・CPU 間の同時刻を含む、スケジューリングのような列
 fn sched_events(cpus: u8, per_cpu: usize) -> Vec<SynEvent> {
     let (pr_th, running) = code("PR_TH", "RUNNING");
@@ -660,6 +1117,39 @@ mod tests {
             }
         }
         out
+    }
+
+    /// 定義の無いイベントは Unknown(SEC のように traceprinter が行を出すものは Display)
+    #[test]
+    fn unknown_events_have_unknown_display_status() {
+        use crate::ids::EventId;
+        use crate::model::DisplayStatus;
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/kev/data/unknown_event.csv");
+        let kev = crate::parse(&kev_bytes(&std::fs::read_to_string(path).unwrap())).unwrap();
+        let status = |class: u8, event: u16| {
+            let ev = kev
+                .events
+                .iter()
+                .find(|e| e.int_class_id == class && e.int_event_id == event)
+                .unwrap();
+            (ev.event_id == EventId::UNKNOWN, ev.display_status)
+        };
+        for (class, event) in [
+            (def::CLASS_SYSTEM, 0x20),
+            (def::CLASS_SYSTEM, 0x220),
+            (def::CLASS_CONTROL, 0x10),
+            (def::CLASS_QVM, 0x1ff),
+        ] {
+            assert_eq!(
+                status(class, event),
+                (true, DisplayStatus::Unknown),
+                "{class} {event:#x}"
+            );
+        }
+        assert_eq!(status(def::CLASS_SEC, 0x3ff), (true, DisplayStatus::Display));
+        assert_eq!(status(def::CLASS_PR_TH, 0x3f), (true, DisplayStatus::Unknown));
+        let (pr_th, running) = code("PR_TH", "RUNNING");
+        assert_eq!(status(pr_th, running), (false, DisplayStatus::Display));
     }
 
     #[test]

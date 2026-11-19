@@ -4,6 +4,7 @@
 //! - args.rs: traceprinter の表示の定義(手で保守する)
 //! - event_parser.rs: スロットの読み取りからイベントの列まで
 //! - event_decoder.rs: イベントの表示文字列
+//! - slog2.rs: SLOG2(SLOG の payloads の slog2 のレコード)の表示文字列
 //! - traceprinter.rs: traceprinter 互換出力
 
 pub mod args;
@@ -13,6 +14,7 @@ pub(crate) mod event_decoder;
 pub(crate) mod event_parser;
 #[doc(hidden)]
 pub mod scenarios;
+pub(crate) mod slog2;
 pub(crate) mod traceprinter;
 
 use crate::ids::{ClassId, EventId};

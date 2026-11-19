@@ -15,3 +15,4 @@ kevcsv の CSV(書式は tests/kev/tools/kevedit/CSV_FORMAT.md)。`tests/kev/too
 | reversal.csv | 同じ CPU の中で時刻が戻る(2 CPU) |
 | seq_gap.csv | トレースバッファの通番の飛びと DROPPED(2 CPU) |
 | unknown_class.csv | 定義の無いクラス(0、11〜31)のイベント |
+| unknown_event.csv | 定義のあるクラスの定義の無いイベント(SYSTEM 0x20・0x220 など。traceprinter は何も出さない) |

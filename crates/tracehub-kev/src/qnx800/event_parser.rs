@@ -9,6 +9,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::{args, def, event_decoder, header_bits, semantic_ids};
+use crate::ids::{ClassId, EventId};
 use crate::model::{CombineStatus, DiagInfo, DiagKind, DisplayStatus, OrphanStructure, TraceEvent, TruncateReason};
 use crate::tp_format::Missing;
 
@@ -380,10 +381,13 @@ impl Combiner<'_> {
                         },
                     });
                 }
-                if unknown_line(it.class, it.event)
-                    || event_decoder::format(it.class, it.event, &it.payloads, Missing::Omit).is_some()
-                {
+                // イベントの行 > 定義の無いイベント > TRUNC の行(上で Display) > Silent
+                if event_decoder::format(it.class, it.event, &it.payloads, Missing::Omit).is_some() {
                     display = DisplayStatus::Display;
+                } else if (class_id == ClassId::UNKNOWN || event_id == EventId::UNKNOWN)
+                    && !args::DIAG_UNKNOWN_SILENT.contains(&(it.class, it.event))
+                {
+                    display = DisplayStatus::Unknown;
                 }
             }
         }

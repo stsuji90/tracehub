@@ -4,6 +4,7 @@
 //! - S と、CB だけで途切れた組(payloads が 2 語以下)は fast の書式、それ以外の組は wide の書式
 //! - KER_CALL は種別(enter / exit / int)と 64 ビット版で表示名・表示クラス名が決まる
 //! - PR_TH の小さい番号はスレッドの状態
+//! - SYSTEM の SLOG は、payloads が slog2 のレコードなら SLOG2(slog2.rs)
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -66,6 +67,8 @@ struct Spec800 {
     th_name: Template,
     th_body: Vec<CItem>,
     th_overrides: HashMap<u16, Vec<CItem>>,
+    /// SLOG2 として読む (内部クラス, 内部イベント番号)
+    slog2: (u8, u16),
 }
 
 fn spec() -> &'static Spec800 {
@@ -183,6 +186,14 @@ fn build() -> Spec800 {
             .iter()
             .map(|(n, i)| (th_code(n), tp_format::compile(i)))
             .collect(),
+        slog2: {
+            let (c, e) = args::SLOG2_EVENT;
+            let c = cls(c);
+            (
+                c,
+                event_code(c, e, "", false).unwrap_or_else(|| panic!("args.rs: SLOG2_EVENT {e}")),
+            )
+        },
     }
 }
 
@@ -232,6 +243,15 @@ pub(crate) fn format(class: u8, code: u16, words: &[u32], missing: Missing) -> O
     } else {
         *sp.class_display.get(&class)?
     };
+    if (class, code) == sp.slog2
+        && let Some(a) = super::slog2::render(words)
+    {
+        return Some(Line {
+            class: class_disp.into(),
+            name: args::SLOG2_NAME.into(),
+            args: a,
+        });
+    }
     let ev = sp.events.get(&(class, code)).or_else(|| sp.wildcard.get(&class))?;
     if words.len() < ev.min_words {
         return None;
