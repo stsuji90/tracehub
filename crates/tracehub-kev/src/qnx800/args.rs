@@ -5,6 +5,7 @@
 //! 書式の要素とテンプレートの書き方は crate::tp_format を参照。
 
 use crate::semantic_id::{ClassId, comm, control, int, kercall, process, qvm, sec, system, thread};
+use crate::tp_format::out;
 use crate::tp_format::*;
 
 // ---------------------------------------------------------------- 出力の枠
@@ -97,29 +98,50 @@ pub const FAST_FALLBACK_WIDE_DEFAULT: bool = true;
 // EVENTS の name が無ければ、def.rs の名前(64 ビット版も 64 ビットでない版の名前)。KER_CALL とスレッドの状態は下の規則。
 
 // ---------------------------------------------------------------- カーネルコール
-pub const KERCALL_NAME: &str = "{call}/{num:02}";
-pub const KERCALL_UNKNOWN_CALL: &str = "KER_{num:02}";
+/// 表示名: コール名/番号
+pub fn kercall_name(call: &str, num: u16) -> String {
+    format!("{call}/{num:02}")
+}
+/// def.rs に無いコール番号のコール名
+pub fn kercall_unknown_call(num: u16) -> String {
+    format!("KER_{num:02}")
+}
 /// INT_CALL の形(引数なし)
-pub const INTCALL_NAME: &str = "KER_{call}/{num}";
-pub const INTCALL_UNKNOWN_CALL: &str = "{num:02}";
+pub fn intcall_name(call: &str, num: u16) -> String {
+    format!("KER_{call}/{num}")
+}
+pub fn intcall_unknown_call(num: u16) -> String {
+    format!("{num:02}")
+}
 /// 失敗した exit(表示する exit に限る)
-pub const KERCALL_FAILURE_WHEN: &str = "u0 == 0xffffffff && words >= 2";
-pub const KERCALL_FAILURE: &[Item] = &[t(" ret_val:-1, errno:{u1}")];
+pub fn kercall_failed(w: &[u32]) -> bool {
+    w.len() >= 2 && w[0] == 0xffff_ffff
+}
+pub const KERCALL_FAILURE: &[Item] = &[custom(|a| out!(a, " ret_val:-1, errno:{}", a.u(1)))];
 /// コール名の表示の違い(enter / exit 共通)
 pub const KERCALL_NAMES: &[(&str, &str)] = &[("SIGNAL_KILL_SIGVAL", "SIGNAL_KILL")];
 /// exit だけの表示の違い
 pub const KERCALL_NAMES_EXIT: &[(&str, &str)] = &[("SYNC_CONDVAR_SIGNAL", "SYNC_CONDVAR_SIG")];
 
 // ---------------------------------------------------------------- スレッドの状態(PR_TH の PR_TH_PROCESS_BASE より小さい番号)
-pub const THREAD_NAME: &str = "TH{name}";
+/// 表示名: TH + 状態の名前
+pub fn thread_name(state: &str) -> String {
+    format!("TH{state}")
+}
 /// 定義の無い状態の番号は、これ以下なら表示する(EVENTS の any(ClassId::THREAD))
 pub const THREAD_MAX_PRINTED: u16 = 29;
-pub const THREAD_BODY: &[Item] = &[
-    t(" pid:{d0} tid:{d1} "),
-    t("priority:{d2} policy:{d3}").when("words >= 4"),
-    t(" partition:{d4}").when("words >= 5"),
-    t(" sched_flags:0x{x5:08}").when("words >= 6"),
-];
+pub const THREAD_BODY: &[Item] = &[custom(|a| {
+    out!(a, " pid:{} tid:{} ", a.d(0), a.d(1));
+    if a.words() >= 4 {
+        out!(a, "priority:{} policy:{}", a.d(2), a.d(3));
+    }
+    if a.words() >= 5 {
+        out!(a, " partition:{}", a.d(4));
+    }
+    if a.words() >= 6 {
+        out!(a, " sched_flags:0x{:08x}", a.u(5));
+    }
+})];
 
 // ---------------------------------------------------------------- 値の名前の表
 pub const TABLE_IPI_CMD: Table = &[
@@ -222,12 +244,6 @@ pub const TABLE_SEC_ABLE: Table = &[
     (0x46, "PRIVREG"),
     (0x47, "MOUNTIFS"),
 ];
-pub const TABLES: &[(&str, Table)] = &[
-    ("ipi_cmd", TABLE_IPI_CMD),
-    ("timer_flags", TABLE_TIMER_FLAGS),
-    ("sec_path_status", TABLE_SEC_PATH_STATUS),
-    ("sec_able", TABLE_SEC_ABLE),
-];
 
 // ---------------------------------------------------------------- SLOG2
 // SLOG の payloads が slog2 のレコードなら、traceprinter は SLOG2 という名前でレコードの文字列を出す。
@@ -293,6 +309,118 @@ pub const BLANK_AFTER: &[(ClassId, crate::semantic_id::EventId)] = &[
     (ClassId::CONTROL, control::DROPPED),
 ];
 
+// ---------------------------------------------------------------- 癖のある書式(EVENTS の custom)
+
+/// C の %#0Nx(0 なら 0x を付けない)
+fn hex_alt(v: u32, width: usize) -> String {
+    if v == 0 {
+        format!("{v:0width$x}")
+    } else {
+        format!("{v:#0width$x}")
+    }
+}
+
+fn user_event_name(code: u16) -> String {
+    format!("EVENT:{code}")
+}
+
+fn sec_unknown_name(code: u16) -> String {
+    format!("unknown({code})")
+}
+
+/// SYSTEM の IST_ATTACH・IST_DETACH
+const IST: &[Item] = &[custom(|a| {
+    out!(a, "pid:{} tid:{} intr_id:0x{:x}({})", a.d(0), a.d(1), a.u(2), a.u(2));
+    if a.u(3) != 0xffff_ffff {
+        out!(a, " intr_cpu:{:02}", a.d(3));
+    }
+    out!(a, " flags:0x{:08x}", a.u(4));
+    if a.u(4) & 0x1000_0000 != 0 {
+        out!(a, " EVENT");
+    }
+    out!(a, " ist_prio:{}", a.d(5));
+})];
+
+fn sec_able(a: &Out) {
+    out!(
+        a,
+        " pid:{} able:{} ({})",
+        a.d(0),
+        a.u(1),
+        a.enum_name(TABLE_SEC_ABLE, 1, "UNKNOWN")
+    );
+    if a.words() >= 6 {
+        out!(a, " start:0x{:016x}", a.q(4));
+    }
+    if a.words() >= 8 {
+        out!(a, " end:0x{:016x}", a.q(6));
+    }
+    if a.words() >= 4 {
+        out!(a, "{}", if a.u(2) & 0x1 != 0 { " ALLOW" } else { " DENY" });
+        out!(a, "{}", if a.u(2) & 0x2 != 0 { " as root" } else { " as non-root" });
+    }
+    if a.words() < 8 {
+        out!(a, " TRUNC");
+    }
+}
+
+fn sec_path_attach(a: &Out) {
+    out!(a, " pid:{} ptype:{}", a.d(0), a.u(1));
+    if a.words() < 4 {
+        out!(a, " TRUNC");
+        return;
+    }
+    let status = a.enum_name(TABLE_SEC_PATH_STATUS, 4, "UNKNOWN");
+    out!(a, " ctype:{} chid:{} status:{}", a.d(2), a.d(3), status);
+    if a.words() < 6 {
+        out!(a, " TRUNC");
+    } else {
+        out!(a, " path:{}", a.raw_str(5));
+    }
+}
+
+fn sec_perm_lookup(a: &Out) {
+    let (class, perm) = (a.raw_str(4), a.raw_next());
+    out!(
+        a,
+        " pid:{} class:{} ({}) perm:{} ({}) errno:{}",
+        a.d(0),
+        class,
+        a.d(2),
+        perm,
+        a.d(3),
+        a.d(1)
+    );
+}
+
+fn sec_perm_test(a: &Out) {
+    if a.words() >= 6 {
+        let (pid, ptype, otype, class, perm, errno) = (a.d(0), a.u(1), a.u(2), a.d(3), a.d(4), a.u(5));
+        out!(
+            a,
+            " pid:{pid} ptype:{ptype} otype:{otype} class:{class} perm:{perm} errno:{errno}"
+        );
+    } else {
+        out!(a, " pid:{} ptype:{} TRUNC", a.d(0), a.u(1));
+    }
+}
+
+fn sec_unreg_event(a: &Out) {
+    if a.words() >= 6 {
+        out!(
+            a,
+            " src pid:{} dst:{} (pid:{} tid:{}) denied:{}",
+            a.d(0),
+            a.raw_str(4),
+            a.d(1),
+            a.u(2),
+            a.u(3)
+        );
+    } else {
+        out!(a, " TRUNC");
+    }
+}
+
 // ---------------------------------------------------------------- イベントごとの書式
 // セマンティック ID ごとに 1 行。args: fast と wide に同じ書式、fast / wide: それぞれの書式、*_silent: 出力しない、
 // 書式の無い行: traceprinter は出力しない(fast が無ければ wide を使うかは FAST_FALLBACK_WIDE)。
@@ -301,9 +429,11 @@ pub const BLANK_AFTER: &[(ClassId, crate::semantic_id::EventId)] = &[
 pub const EVENTS: &[Ev] = &[
     // ---- CONTROL
     ev(ClassId::CONTROL, control::TIME).args(&[h("msb", 0), h("lsb(offset)", 1)]),
-    ev(ClassId::CONTROL, control::BUFFER).args(&[t(" sequence = {u0}, num_events = {u1}")]),
-    ev(ClassId::CONTROL, control::BUFFER_END).args(&[t(" cookie1 = {x0}, cookie2 = {x1}")]),
-    ev(ClassId::CONTROL, control::DROPPED).args(&[t(" dropped_events = {u0}")]),
+    ev(ClassId::CONTROL, control::BUFFER)
+        .args(&[custom(|a| out!(a, " sequence = {}, num_events = {}", a.u(0), a.u(1)))]),
+    ev(ClassId::CONTROL, control::BUFFER_END)
+        .args(&[custom(|a| out!(a, " cookie1 = {:x}, cookie2 = {:x}", a.u(0), a.u(1)))]),
+    ev(ClassId::CONTROL, control::DROPPED).args(&[custom(|a| out!(a, " dropped_events = {}", a.u(0)))]),
     // ---- KER_CALL(コールごとに enter・exit・int、それぞれ 64 ビット版)
     ev(ClassId::KER_CALL_ENTER, kercall::NOP)
         .fast(&[h("dummy", 0), h("empty", 1)])
@@ -2091,7 +2221,7 @@ pub const EVENTS: &[Ev] = &[
     // ---- INT
     ev(ClassId::INT, int::DELIVER)
         .name("INT_DELIVER")
-        .args(&[t("intr_id:0x{x0}({u0})")]),
+        .args(&[custom(|a| out!(a, "intr_id:0x{:x}({})", a.u(0), a.u(0)))]),
     // ---- THREAD(スレッドの状態は PR_TH の PR_TH_PROCESS_BASE より小さい番号)
     ev(ClassId::THREAD, thread::DEAD).args(THREAD_BODY),
     ev(ClassId::THREAD, thread::RUNNING).args(THREAD_BODY),
@@ -2185,24 +2315,71 @@ pub const EVENTS: &[Ev] = &[
     ev(ClassId::SYSTEM, system::SLOG).wide(&[d("opcode", 0), d("severity", 1), sz("message", 2)]),
     ev(ClassId::SYSTEM, system::DEFRAG_START).wide(&[d("block_size", 0)]),
     ev(ClassId::SYSTEM, system::RUNSTATE).wide(&[h("bitset", 0)]),
-    ev(ClassId::SYSTEM, system::POWER).args(&[t(" bitset:0x{x0:08}\t actual frequency:{u1} cpu:{u0&0xffff}")]),
+    ev(ClassId::SYSTEM, system::POWER).args(&[custom(|a| {
+        out!(
+            a,
+            " bitset:0x{:08x}\t actual frequency:{} cpu:{}",
+            a.u(0),
+            a.u(1),
+            a.u(0) & 0xffff
+        )
+    })]),
     ev(ClassId::SYSTEM, system::IPI).args_silent(),
-    ev(ClassId::SYSTEM, system::IPI_64)
-        .name("IPI_64")
-        .args(&[t(" ipicmd = {x0:#08}, "), flags(0, "ipi_cmd", " {name}")]),
-    ev(ClassId::SYSTEM, system::PAGEWAIT).args(&[
-        t(" pid:{d0} tid:{d1} ip:0x{x2:08} vaddr:0x{x3:08} type:{x4:04} --- flags:0x{x5:08} offset:0x{q6:016}"),
-        t(" name:{z8:6}").when("words >= 9"),
+    ev(ClassId::SYSTEM, system::IPI_64).name("IPI_64").args(&[
+        custom(|a| out!(a, " ipicmd = {}, ", hex_alt(a.u(0), 8))),
+        flags(0, TABLE_IPI_CMD, " "),
     ]),
+    ev(ClassId::SYSTEM, system::PAGEWAIT).args(&[custom(|a| {
+        out!(
+            a,
+            " pid:{} tid:{} ip:0x{:08x} vaddr:0x{:08x} type:{:04x} --- flags:0x{:08x} offset:0x{:016x}",
+            a.d(0),
+            a.d(1),
+            a.u(2),
+            a.u(3),
+            a.u(4),
+            a.u(5),
+            a.q(6)
+        );
+        if a.words() >= 9 {
+            // 右寄せの幅は語 8 から末尾までの語数(実測)
+            out!(a, " name:{:>w$}", a.nul_str(8), w = a.words() - 8);
+        }
+    })]),
     ev(ClassId::SYSTEM, system::TIMER).args(&[
-        t(" pid:{d0} tid:{d1} timer_id:{d2} flags:0x{x3:08}"),
-        flags(3, "timer_flags", " {name}"),
+        custom(|a| {
+            out!(
+                a,
+                " pid:{} tid:{} timer_id:{} flags:0x{:08x}",
+                a.d(0),
+                a.d(1),
+                a.d(2),
+                a.u(3)
+            )
+        }),
+        flags(3, TABLE_TIMER_FLAGS, " "),
     ]),
     ev(ClassId::SYSTEM, system::DEFRAG_END).wide(&[d("result", 0), d("freemem", 1), d("maxblock", 2)]),
-    ev(ClassId::SYSTEM, system::PROFILE).args(&[t(" ip = 0x{x0:08}, tid = 0x{x1:08}, pid = 0x{x2:08}")]),
+    ev(ClassId::SYSTEM, system::PROFILE).args(&[custom(|a| {
+        out!(
+            a,
+            " ip = 0x{:08x}, tid = 0x{:08x}, pid = 0x{:08x}",
+            a.u(0),
+            a.u(1),
+            a.u(2)
+        )
+    })]),
     ev(ClassId::SYSTEM, system::PROFILE_64)
         .name("PROFILE_64")
-        .args(&[t(" ip = 0x{q0:016}, tid = 0x{x2:08}, pid = 0x{x3:08}")]),
+        .args(&[custom(|a| {
+            out!(
+                a,
+                " ip = 0x{:016x}, tid = 0x{:08x}, pid = 0x{:08x}",
+                a.q(0),
+                a.u(2),
+                a.u(3)
+            )
+        })]),
     ev(ClassId::SYSTEM, system::MAPNAME_64).wide(&[d("pid", 0), q("vaddr", 1), e("len", 3), sz("name", 5)]),
     ev(ClassId::SYSTEM, system::APS_PSTATS).wide(&[
         d("id", 0),
@@ -2235,23 +2412,11 @@ pub const EVENTS: &[Ev] = &[
     ]),
     ev(ClassId::SYSTEM, system::APS_PROCESS).wide(&[d("pid", 0), d("id", 1)]),
     ev(ClassId::SYSTEM, system::SCHED_CONF).wide_silent(),
-    ev(ClassId::SYSTEM, system::IST_ATTACH).min_words(6).args(&[
-        t("pid:{d0} tid:{d1} intr_id:0x{x2}({u2})"),
-        t(" intr_cpu:{d3:02}").when("u3 != 0xffffffff"),
-        t(" flags:0x{x4:08}"),
-        t(" EVENT").when("u4 & 0x10000000"),
-        t(" ist_prio:{d5}"),
-    ]),
-    ev(ClassId::SYSTEM, system::IST_DETACH).min_words(6).args(&[
-        t("pid:{d0} tid:{d1} intr_id:0x{x2}({u2})"),
-        t(" intr_cpu:{d3:02}").when("u3 != 0xffffffff"),
-        t(" flags:0x{x4:08}"),
-        t(" EVENT").when("u4 & 0x10000000"),
-        t(" ist_prio:{d5}"),
-    ]),
+    ev(ClassId::SYSTEM, system::IST_ATTACH).min_words(6).args(IST),
+    ev(ClassId::SYSTEM, system::IST_DETACH).min_words(6).args(IST),
     ev(ClassId::SYSTEM, system::PCTRACE).wide_silent(),
     // ---- USER(番号は任意)
-    any(ClassId::USER).name("EVENT:{code}").args(&[dump()]),
+    any(ClassId::USER).name_by_code(user_event_name).args(&[dump()]),
     // ---- COMM
     ev(ClassId::COMM, comm::SMSG)
         .name("SND_MESSAGE")
@@ -2298,38 +2463,17 @@ pub const EVENTS: &[Ev] = &[
         .name("MSG_ERROR")
         .args(&[d("tid", 0), d("pid", 1)]),
     // ---- QUIP(番号は任意)
-    any(ClassId::QUIP).name("EVENT:{code}").args(&[dump()]),
+    any(ClassId::QUIP).name_by_code(user_event_name).args(&[dump()]),
     // ---- SEC
-    ev(ClassId::SEC, sec::ABLE).args(&[
-        t(" pid:{d0} able:{u1} ({enum:sec_able:u1:UNKNOWN})"),
-        t(" start:0x{q4:016}").when("words >= 6"),
-        t(" end:0x{q6:016}").when("words >= 8"),
-        t(" ALLOW").when("words >= 4 && u2 & 0x1"),
-        t(" DENY").when("words >= 4 && u2 & 0x1 == 0"),
-        t(" as root").when("words >= 4 && u2 & 0x2"),
-        t(" as non-root").when("words >= 4 && u2 & 0x2 == 0"),
-        t(" TRUNC").when("words < 8"),
-    ]),
-    ev(ClassId::SEC, sec::ABLE_LOOKUP).args(&[t(" name:{r1} able:{u0}")]),
-    ev(ClassId::SEC, sec::PATH_ATTACH).args(&[
-        t(" pid:{d0} ptype:{u1}"),
-        t(" TRUNC").when("words < 4"),
-        t(" ctype:{d2} chid:{d3} status:{enum:sec_path_status:u4:UNKNOWN}").when("words >= 4"),
-        t(" TRUNC").when("words >= 4 && words < 6"),
-        t(" path:{r5}").when("words >= 6"),
-    ]),
+    ev(ClassId::SEC, sec::ABLE).args(&[custom(sec_able)]),
+    ev(ClassId::SEC, sec::ABLE_LOOKUP).args(&[custom(|a| out!(a, " name:{} able:{}", a.raw_str(1), a.u(0)))]),
+    ev(ClassId::SEC, sec::PATH_ATTACH).args(&[custom(sec_path_attach)]),
     ev(ClassId::SEC, sec::QNET_CONNECT).name("unknown(3)").args(&[]),
-    ev(ClassId::SEC, sec::PERM_LOOKUP).args(&[t(" pid:{d0} class:{r4} ({d2}) perm:{rnext} ({d3}) errno:{d1}")]),
-    ev(ClassId::SEC, sec::PERM_TEST).args(&[
-        t(" pid:{d0} ptype:{u1} otype:{u2} class:{d3} perm:{d4} errno:{u5}").when("words >= 6"),
-        t(" pid:{d0} ptype:{u1} TRUNC").when("words < 6"),
-    ]),
-    ev(ClassId::SEC, sec::UNREG_EVENT).args(&[
-        t(" src pid:{d0} dst:{r4} (pid:{d1} tid:{u2}) denied:{u3}").when("words >= 6"),
-        t(" TRUNC").when("words < 6"),
-    ]),
+    ev(ClassId::SEC, sec::PERM_LOOKUP).args(&[custom(sec_perm_lookup)]),
+    ev(ClassId::SEC, sec::PERM_TEST).args(&[custom(sec_perm_test)]),
+    ev(ClassId::SEC, sec::UNREG_EVENT).args(&[custom(sec_unreg_event)]),
     ev(ClassId::SEC, sec::OPEN_EVENT).name("unknown(7)").args(&[]),
-    any(ClassId::SEC).name("unknown({code})").args(&[]),
+    any(ClassId::SEC).name_by_code(sec_unknown_name).args(&[]),
     // ---- QVM
     ev(ClassId::QVM, qvm::GUEST_ENTER).wide(&[q("guest_ip", 0)]),
     ev(ClassId::QVM, qvm::GUEST_EXIT).wide(&[

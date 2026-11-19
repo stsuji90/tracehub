@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 use super::{args, def, semantic_ids};
 use crate::semantic_id::{ClassId, EventId};
-use crate::tp_format::{self, CItem, Cond, Missing, Spec, Table, Template, Var};
+use crate::tp_format::{self, Missing, Name, Spec};
 
 /// 1 行の部品
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,25 +23,10 @@ pub(crate) struct Line {
 }
 
 #[derive(Debug)]
-enum CSpec {
-    None,
-    Silent,
-    Items(Vec<CItem>),
-}
-
-fn cspec(s: Spec) -> CSpec {
-    match s {
-        Spec::None => CSpec::None,
-        Spec::Silent => CSpec::Silent,
-        Spec::Items(i) => CSpec::Items(tp_format::compile(i)),
-    }
-}
-
-#[derive(Debug)]
 struct CEv {
-    name: Option<Template>,
-    fast: CSpec,
-    wide: CSpec,
+    name: Name,
+    fast: Spec,
+    wide: Spec,
     min_words: usize,
     intcall: bool,
 }
@@ -52,19 +37,11 @@ struct Spec800 {
     /// クラスの定義の無い番号の行と、内部イベント番号の上限
     any: HashMap<ClassId, (CEv, Option<u16>)>,
     blank: HashSet<(ClassId, EventId)>,
-    tables: HashMap<&'static str, Table>,
     class_display: HashMap<ClassId, &'static str>,
     fast_fallback_wide: HashMap<ClassId, bool>,
     kc_names: HashMap<u16, &'static str>,
     kc_names_exit: HashMap<u16, &'static str>,
     kc_raw_names: HashMap<u16, &'static str>,
-    kc_name: Template,
-    kc_unknown_call: Template,
-    intcall_name: Template,
-    intcall_unknown_call: Template,
-    failure_when: Cond,
-    failure: Vec<CItem>,
-    th_name: Template,
     slog2: (ClassId, EventId),
 }
 
@@ -78,9 +55,9 @@ fn build() -> Spec800 {
     let mut any = HashMap::new();
     for e in args::EVENTS {
         let compiled = CEv {
-            name: e.name.map(Template::parse),
-            fast: cspec(e.fast),
-            wide: cspec(e.wide),
+            name: e.name,
+            fast: e.fast,
+            wide: e.wide,
             min_words: e.min_words as usize,
             intcall: e.intcall,
         };
@@ -115,19 +92,11 @@ fn build() -> Spec800 {
         events,
         any,
         blank: args::BLANK_AFTER.iter().copied().collect(),
-        tables: args::TABLES.iter().copied().collect(),
         class_display: args::CLASS_DISPLAY.iter().copied().collect(),
         fast_fallback_wide: args::FAST_FALLBACK_WIDE.iter().copied().collect(),
         kc_names,
         kc_names_exit: args::KERCALL_NAMES_EXIT.iter().map(|(n, d)| (kc_num(n), *d)).collect(),
         kc_raw_names: def::KERCALLS.iter().map(|r| (r.0, r.1)).collect(),
-        kc_name: Template::parse(args::KERCALL_NAME),
-        kc_unknown_call: Template::parse(args::KERCALL_UNKNOWN_CALL),
-        intcall_name: Template::parse(args::INTCALL_NAME),
-        intcall_unknown_call: Template::parse(args::INTCALL_UNKNOWN_CALL),
-        failure_when: Cond::parse(args::KERCALL_FAILURE_WHEN),
-        failure: tp_format::compile(args::KERCALL_FAILURE),
-        th_name: Template::parse(args::THREAD_NAME),
         slog2: args::SLOG2_EVENT,
     }
 }
@@ -165,17 +134,17 @@ fn row(sp: &Spec800, class: u8, code: u16) -> Option<(ClassId, EventId, &CEv)> {
 }
 
 /// 書式の選択: S(と CB だけで途切れた組)は fast、組は wide
-fn choose<'a>(sp: &Spec800, class: ClassId, multi: bool, ev: &'a CEv) -> Option<&'a CSpec> {
+fn choose(sp: &Spec800, class: ClassId, multi: bool, ev: &CEv) -> Option<Spec> {
     if multi {
-        return Some(&ev.wide);
+        return Some(ev.wide);
     }
-    match &ev.fast {
-        CSpec::None => sp
+    match ev.fast {
+        Spec::None => sp
             .fast_fallback_wide
             .get(&class)
             .copied()
             .unwrap_or(args::FAST_FALLBACK_WIDE_DEFAULT)
-            .then_some(&ev.wide),
+            .then_some(ev.wide),
         s => Some(s),
     }
 }
@@ -200,44 +169,33 @@ fn display(sp: &Spec800, c: ClassId, class: u8, code: u16, ev: Option<&CEv>) -> 
     if is_kercall(c) {
         let intcall = ev.is_some_and(|e| e.intcall);
         let num = code & def::KERCALL_NUM_MASK;
-        let mut name = String::new();
-        let mut call = String::new();
         if intcall {
-            match sp.kc_raw_names.get(&num) {
-                Some(n) => call.push_str(n),
-                None => sp
-                    .intcall_unknown_call
-                    .render_vars(&[("num", Var::Num(num as u64))], &mut call),
-            }
-            sp.intcall_name
-                .render_vars(&[("call", Var::Str(&call)), ("num", Var::Num(num as u64))], &mut name);
-            return (Some(args::DISPLAY_INT_CALL), Some(name));
+            let call = match sp.kc_raw_names.get(&num) {
+                Some(n) => n.to_string(),
+                None => args::intcall_unknown_call(num),
+            };
+            return (Some(args::DISPLAY_INT_CALL), Some(args::intcall_name(&call, num)));
         }
         let exit = c == ClassId::KER_CALL_EXIT;
-        match if exit { sp.kc_names_exit.get(&num) } else { None }.or_else(|| sp.kc_names.get(&num)) {
-            Some(n) => call.push_str(n),
-            None => sp
-                .kc_unknown_call
-                .render_vars(&[("num", Var::Num(num as u64))], &mut call),
-        }
-        sp.kc_name
-            .render_vars(&[("call", Var::Str(&call)), ("num", Var::Num(num as u64))], &mut name);
-        return (sp.class_display.get(&c).copied(), Some(name));
+        let call = match if exit { sp.kc_names_exit.get(&num) } else { None }.or_else(|| sp.kc_names.get(&num)) {
+            Some(n) => n.to_string(),
+            None => args::kercall_unknown_call(num),
+        };
+        return (sp.class_display.get(&c).copied(), Some(args::kercall_name(&call, num)));
     }
     let disp = sp.class_display.get(&c).copied();
     let ev = match ev {
         Some(e) => e,
         None => return (disp, None),
     };
-    let mut name = String::new();
-    match &ev.name {
-        Some(t) => t.render_vars(&[("code", Var::Num(code as u64))], &mut name),
-        None if c == ClassId::THREAD && code < def::PR_TH_PROCESS_BASE => sp.th_name.render_vars(
-            &[("name", Var::Str(def_name(class, code).unwrap_or_default()))],
-            &mut name,
-        ),
-        None => name.push_str(def_name(class, code).unwrap_or_default()),
-    }
+    let name = match ev.name {
+        Name::Fixed(n) => n.to_string(),
+        Name::Code(f) => f(code),
+        Name::Rule if c == ClassId::THREAD && code < def::PR_TH_PROCESS_BASE => {
+            args::thread_name(def_name(class, code).unwrap_or_default())
+        }
+        Name::Rule => def_name(class, code).unwrap_or_default().to_string(),
+    };
     (disp, Some(name))
 }
 
@@ -268,15 +226,15 @@ pub(crate) fn format(class: u8, code: u16, words: &[u32], missing: Missing) -> O
     if words.len() < ev.min_words {
         return None;
     }
-    let CSpec::Items(items) = choose(sp, c, words.len() > 2, ev)? else {
+    let Spec::Items(items) = choose(sp, c, words.len() > 2, ev)? else {
         return None;
     };
     let mut a = String::new();
     // 失敗した exit は共通の書式(表示するイベントに限る)
-    if c == ClassId::KER_CALL_EXIT && sp.failure_when.eval(words) {
-        tp_format::render(&sp.failure, words, &sp.tables, missing, &mut a);
+    if c == ClassId::KER_CALL_EXIT && args::kercall_failed(words) {
+        tp_format::render(args::KERCALL_FAILURE, words, missing, &mut a);
     } else {
-        tp_format::render(items, words, &sp.tables, missing, &mut a);
+        tp_format::render(items, words, missing, &mut a);
     }
     Some(Line {
         class: class_name,
