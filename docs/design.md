@@ -72,12 +72,15 @@ tracehub/
           slog2.rs             SLOG2 の表示文字列(§7.4)
           traceprinter.rs      traceprinter 互換出力(§9)
           scenarios.rs         試験用の合成データの生成(§14)
+          catalog.rs           確認用のイベント一覧(§14)
       examples/scenarios.rs    合成データを CSV で書く
+      examples/event_catalog.rs 確認用のイベント一覧を TSV で書く
   tests/
     kev/                       kev 用の道具と試験データ(形式ごとにディレクトリを分ける)
       tools/
         gen_qnx_def.py         SDP のヘッダと TableOfEvents から def.rs を生成する
         compare.py             traceprinter と tracehub の出力を比べる
+        event_catalog.py       確認用のイベント一覧を作る(TableOfEvents・比較の結果・実機の kev と並べる)
         kevedit/               試験用の kev を CSV から作る道具(kevedit.html、kevcsv.py、CSV_FORMAT.md)
       data/                    試験用の合成データ(小さな場面の CSV)
   docs/
@@ -549,3 +552,22 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 - traceprinter の場所は `--traceprinter` か環境変数 `TRACEHUB_TRACEPRINTER`、実機の kev の置き場所は `--kev-dir` か `TRACEHUB_KEV_DIR`。
 - 実機で取りにくいイベントは、合成データで確かめる。
 - traceprinter の出力と実機の kev は、リポジトリに入れない。
+
+### 確認用のイベント一覧
+
+```
+python tests/kev/tools/compare.py
+python tests/kev/tools/event_catalog.py --table <TableOfEvents.txt> [--kev-dir <DIR>]
+```
+
+`target/event_catalog/` に、セマンティック ID ごとに 1 行の `events.csv` と、件数のまとめの `summary.md` を作る(TableOfEvents の文を含むので、リポジトリに入れない)。
+
+| 列 | 内容 |
+|---|---|
+| クラス・イベント・class_id・event_id・内部 ID | セマンティック ID と、対応する内部 ID |
+| 表示名 | traceprinter の表示クラス名・表示イベント名 |
+| fast の書式・wide の書式 | args.rs の書式(要素の並び。fast が無く wide を使うものは「wide と同じ」) |
+| 出力の例 | 合成 kev での出力(traceprinter と一致を確かめたもの) |
+| TableOfEvents | 対応するブロックの有無と、Fast・Wide の引数名 |
+| 引数名 | TableOfEvents の引数名と tracehub のラベルの違い(参考。traceprinter のラベルは TableOfEvents と違うことが多い) |
+| 合成 kev・実機 kev | 件数、traceprinter が行を出した件数、compare.py の結果 |

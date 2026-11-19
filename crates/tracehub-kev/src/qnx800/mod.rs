@@ -8,6 +8,8 @@
 //! - traceprinter.rs: traceprinter 互換出力
 
 pub mod args;
+#[doc(hidden)]
+pub mod catalog;
 #[rustfmt::skip] // 生成ファイル(tests/kev/tools/gen_qnx_def.py の出力のまま)
 pub mod def;
 pub(crate) mod event_decoder;

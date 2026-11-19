@@ -1086,30 +1086,30 @@ fn to_csv(cpus: u8, slots: &[Slot]) -> String {
     s
 }
 
+/// CSV(この生成器の形)を kev のバイト列にする
+pub fn kev_bytes(csv: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut sec = "";
+    for line in csv.lines() {
+        let cells: Vec<&str> = line.split(',').collect();
+        if cells[0].starts_with('[') {
+            sec = cells[0];
+        } else if sec == "[header]" {
+            out.extend_from_slice(cells[1].as_bytes());
+            out.extend_from_slice(cells[2].as_bytes());
+        } else if sec == "[slots]" {
+            for c in &cells[1..5] {
+                out.extend_from_slice(&u32::from_str_radix(&c[2..], 16).unwrap().to_le_bytes());
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{DecodeOptions, DiagKind, MissingStyle};
-
-    /// CSV(この生成器の形)を kev のバイト列にする
-    pub(super) fn kev_bytes(csv: &str) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut sec = "";
-        for line in csv.lines() {
-            let cells: Vec<&str> = line.split(',').collect();
-            if cells[0].starts_with('[') {
-                sec = cells[0];
-            } else if sec == "[header]" {
-                out.extend_from_slice(cells[1].as_bytes());
-                out.extend_from_slice(cells[2].as_bytes());
-            } else if sec == "[slots]" {
-                for c in &cells[1..5] {
-                    out.extend_from_slice(&u32::from_str_radix(&c[2..], 16).unwrap().to_le_bytes());
-                }
-            }
-        }
-        out
-    }
 
     /// 定義の無いイベントは Unknown(SEC のように traceprinter が行を出すものは Display)
     #[test]
@@ -1203,23 +1203,10 @@ mod coverage {
 
     /// def.rs の表から、セマンティック ID の全組み合わせ(USER・QUIP の任意番号を除く)
     fn all_ids() -> BTreeSet<(ClassId, EventId)> {
-        let mut s = BTreeSet::new();
-        let mut add = |c: ClassId, t: &[(u16, &str, EventId)]| s.extend(t.iter().map(|r| (c, r.2)));
-        add(ClassId::CONTROL, def::CONTROL_EVENTS);
-        for c in [ClassId::KER_CALL_ENTER, ClassId::KER_CALL_EXIT, ClassId::KER_CALL_INT] {
-            add(c, def::KERCALLS);
-            add(c, def::KERCALLS_64);
-        }
-        add(ClassId::INT, def::INT_EVENTS);
-        add(ClassId::THREAD, def::THREAD_STATES);
-        add(ClassId::THREAD, def::PR_TH_VTHREAD);
-        add(ClassId::PROCESS, def::PR_TH_PROCESS);
-        add(ClassId::SYSTEM, def::SYSTEM_EVENTS);
-        add(ClassId::SYSTEM, def::SYSTEM_EVENTS_64);
-        add(ClassId::COMM, def::COMM_EVENTS);
-        add(ClassId::SEC, def::SEC_EVENTS);
-        add(ClassId::QVM, def::QVM_EVENTS);
-        s
+        crate::qnx800::catalog::all_ids()
+            .into_iter()
+            .map(|(c, e, _)| (c, e))
+            .collect()
     }
 
     /// args.rs の EVENTS は、セマンティック ID の全組み合わせを 1 行ずつ持つ(重複は spec の組み立てで panic)
@@ -1238,7 +1225,7 @@ mod coverage {
     #[test]
     fn catalog_covers_all_semantic_ids() {
         let csv = scenarios().into_iter().find(|s| s.0 == "catalog").unwrap().1;
-        let kev = crate::parse(&super::tests::kev_bytes(&csv)).unwrap();
+        let kev = crate::parse(&super::kev_bytes(&csv)).unwrap();
         let all = all_ids();
         let mut seen: BTreeMap<(ClassId, EventId), bool> = BTreeMap::new(); // 組み合わせ → 表示されたか
         for ev in &kev.events {

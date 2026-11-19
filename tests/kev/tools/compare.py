@@ -12,12 +12,14 @@
 --work          作業ディレクトリ(省略時は target/compare)
 
 traceprinter の出力(-o のファイル)と `tracehub traceprinter` の出力を比べ、違えば最初の違う行を出して終了コード 1。
+結果は <work>/result.json にも書く(tests/kev/tools/event_catalog.py が使う)。
 traceprinter はまれに 0xC0000005 で落ちることがあるので、そのときは 3 回まで実行し直す。
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -94,15 +96,18 @@ def main() -> int:
         kevs += [("実機", k) for k in sorted(d.glob("*.kev"))]
 
     fail = 0
+    results = []
     for kind, k in kevs:
         tp_out, th_out = out_dir / (k.stem + ".tp.txt"), out_dir / (k.stem + ".th.txt")
         err = traceprinter(a.traceprinter, k, tp_out)
         if err:
             print(f"SKIP {kind} {k.name}: {err}")
+            results.append({"kind": kind, "kev": str(k), "result": "skip"})
             continue
         r = run([exe, "traceprinter", k, th_out])
         if r.returncode != 0:
             print(f"NG   {kind} {k.name}: tracehub が失敗しました: {r.stderr.decode(errors='replace').strip()}")
+            results.append({"kind": kind, "kev": str(k), "result": "ng"})
             fail += 1
             continue
         a_, b_ = tp_out.read_bytes(), th_out.read_bytes()
@@ -111,6 +116,8 @@ def main() -> int:
         else:
             print(f"NG   {kind} {k.name}: {first_diff(a_, b_)}")
             fail += 1
+        results.append({"kind": kind, "kev": str(k), "result": "ok" if a_ == b_ else "ng"})
+    (work / "result.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"{len(kevs)} 件中 {fail} 件が違います" if fail else f"{len(kevs)} 件すべて一致")
     return 1 if fail else 0
 
