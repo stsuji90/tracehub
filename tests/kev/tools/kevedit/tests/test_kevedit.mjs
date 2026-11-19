@@ -5,7 +5,7 @@
 // 1. 試験の中で作った kev(と、ディレクトリを渡せばその中の *.kev)について、
 //    kev → kev、kev → CSV → kev がバイト単位で一致するか(末尾の端数バイトは除く)
 // 2. kevcsv.py(python があれば)が kevedit.html と同じ CSV / kev を作るか
-// 3. トレースバッファの点検・追加・スロット数の修正、ヘッダ、文字列、数値の読み方
+// 3. 版の選び方、ヘッダ、文字列、数値の読み方
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,11 +23,11 @@ const defs = JSON.parse(between('<script id="defs" type="application/json">', "<
 const core = between("// ==== CORE BEGIN", "// ==== CORE END").replace(/^[^\n]*\n/, ""); // 印の行の残りを除く
 const { CONF, makeCore } = new Function(core + "\nreturn { CONF, makeCore };")();
 const K = makeCore(defs);
+const HK = CONF.header;
 
 let fail = 0;
 const ok = (cond, msg) => { if (!cond) { fail++; console.log("NG", msg); } };
 const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
-const issues = (slots) => { const a = K.analyzeBuffers(slots); return a.issues.length + a.bufs.filter((b) => b.issues.length).length; };
 
 // ---- 試験用の kev を作る
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "kevedit-test-"));
@@ -38,25 +38,25 @@ const ev = (cpu, cls, num, stamp, d1, d2, st = 0, flags = 0) => {
 };
 function sample({ le = true, junk = "", syspage = 0, tail = 0, off = false } = {}) {
   const doc = K.newDoc();
-  if (!le) doc.header = doc.header.map((x) => (x.key.startsWith(defs.header.little_endian) ? { ...x, key: defs.header.big_endian + defs.header.postfix } : x));
+  if (!le) doc.header = doc.header.map((x) => (x.key.startsWith(HK.little_endian) ? { ...x, key: HK.big_endian + HK.postfix } : x));
   if (syspage) {
-    doc.header = doc.header.map((x) => (x.key.startsWith(defs.header.syspage_len) ? { ...x, value: String(syspage) } : x));
+    doc.header = doc.header.map((x) => (x.key.startsWith(HK.syspage_len) ? { ...x, value: String(syspage) } : x));
     for (let o = 0; o < syspage; o += 16) doc.syspage.push({ on: true, bytes: Uint8Array.from({ length: Math.min(16, syspage - o) }, (_, i) => (o + i) & 0xff) });
   }
   doc.slots = doc.slots.filter((s) => !s.fresh);
   for (const cpu of [0, 1]) {
-    const r = K.addBuffer(doc.slots); // TIME, BUFFER, BUFFER_END
-    for (let i = r.at; i < r.at + 3; i++) doc.slots[i].h = K.setF(doc.slots[i].h, "cpu", cpu);
     const [w1, w2] = K.strToWords("abcdefg", le);
-    doc.slots.splice(r.at + 2, 0,                           // BUFFER と BUFFER_END の間に入れる
+    doc.slots.push(
+      ev(cpu, 1, 1, 0x80 + cpu, 0, 0x80 + cpu),            // CONTROL TIME
+      ev(cpu, 1, 2, 0x80 + cpu, 1, 8),                     // CONTROL BUFFER
       ev(cpu, 4, 1, 0x100 + cpu, 1, 2),                    // PR_TH THRUNNING(simple)
       ev(cpu, 5, 12, 0x200 + cpu, 3, 4, 1),                // SYSTEM SLOG(CB)
       ev(cpu, 5, 12, 0x200 + cpu, w1, w2, 3),              // SYSTEM SLOG(CE)
       ev(cpu, 2, 0x28b, 0x300 + cpu, 0xffffffff, 0, 0, 1), // KER_CALL(exit・64bit)、フラグ付き
-      ev(cpu, 31, 1023, 0x400 + cpu, 0x5c, 0x7f));         // 未定義のクラス
+      ev(cpu, 31, 1023, 0x400 + cpu, 0x5c, 0x7f),          // 未定義のクラス
+      ev(cpu, 1, 4, 0x400 + cpu, 0xe6e6e6e6, 0xe6e6e6e6)); // CONTROL BUFFER_END
   }
   if (off) doc.slots[3].on = false;
-  K.fixBufferCounts(doc.slots);
   let b = K.buildKev(doc);
   const pre = new TextEncoder().encode(junk);
   const out = new Uint8Array(pre.length + b.length + tail);
@@ -87,7 +87,6 @@ for (const f of files) {
   ok(K.toCsv(doc2) === csv, `${f}: CSV → CSV が一致しない`);
   console.log(`ok ${path.basename(f)} (${doc.slots.length} スロット)`);
 }
-ok(issues(K.parseKev(samples["le.kev"]).slots) === 0, "試験用の kev にトレースバッファの注意がある");
 
 // ---- 2. kevcsv.py と同じ結果か
 const py = ["python", "python3", "py"].find((c) => spawnSync(c, ["--version"]).status === 0);
@@ -107,28 +106,22 @@ else {
   console.log("ok kevcsv.py");
 }
 
-// ---- 3a. トレースバッファ: 崩したスロット数を見つけて直す
+// ---- 3a. 版: TRACE_SYS_RELEASE で名前の定義を選ぶ(定義の無い版は最新の版で、注意を出す)
 {
-  const slots = K.parseKev(samples["le.kev"]).slots;
-  const before = K.buildKev({ header: K.newDoc().header, syspage: [], slots });
-  const b0 = K.analyzeBuffers(slots).bufs[0];
-  slots[b0.row].d2 += 1;
-  ok(issues(slots) === 1, "崩したスロット数を見つけない");
-  ok(K.fixBufferCounts(slots) === 1 && issues(slots) === 0, "スロット数を直せない");
-  ok(same(K.buildKev({ header: K.newDoc().header, syspage: [], slots }), before), "直した結果が元と違う");
-}
-// ---- 3b. トレースバッファ追加: 末尾(新規の空行より前)に 3 行
-{
-  const doc = K.newDoc();
-  let r = K.addBuffer(doc.slots);
-  ok(r.at === 0 && r.cpu === 0 && r.seq === CONF.bufferSeqStart, `追加の位置・CPU・通番 ${JSON.stringify(r)}`);
-  ok(doc.slots.length === CONF.newRows + 3 && issues(doc.slots) === 0, "追加した直後に注意がある");
-  doc.slots.splice(2, 0, ev(0, 4, 1, 0x200, 1, 2), ev(0, 4, 1, 0x210, 1, 2));
-  ok(issues(doc.slots) === 1 && K.fixBufferCounts(doc.slots) === 1 && issues(doc.slots) === 0, "イベントを入れたあとのスロット数の修正");
-  r = K.addBuffer(doc.slots);
-  ok(r.at === 5 && r.seq === CONF.bufferSeqStart + 1, `2 つ目の追加 ${JSON.stringify(r)}`);
-  ok(issues(doc.slots) === 0 && K.analyzeBuffers(doc.slots).bufs.length === 2, "2 つ目の追加の後");
-  ok(K.parseKev(K.buildKev(doc)).slots.length === 8, "追加したトレースバッファの kev");
+  const withRelease = (v) => ({ ...K.newDoc(), header: K.newDoc().header.map((x) => (x.key.startsWith(HK.release) ? { ...x, value: v } : x)) });
+  ok(K.versionKey("8.0.0") === "8.0" && K.versionKey(" 8.0.1") === "8.0" && K.versionKey("8.01") === null, "版の名前の読み方");
+  for (const k of K.VERSIONS) {
+    const doc = K.newDoc(k);
+    ok(K.D.release === k && K.useFor(doc.header) === k, `新規作成した QNX ${k} の文書の版`);
+    ok(K.check(doc).length === 0, `QNX ${k} の新規作成で注意が出る`);
+  }
+  const unknown = withRelease("1.2.3");
+  ok(K.useFor(unknown.header) === K.LATEST, "定義の無い版で最新の版にならない");
+  ok(K.check(unknown).some(([, m]) => m.includes("1.2.3")), "定義の無い版の注意が出ない");
+  const none = { ...K.newDoc(), header: K.newDoc().header.filter((x) => !x.key.startsWith(HK.release)) };
+  ok(K.check(none).some(([, m]) => m.includes(HK.release)), "TRACE_SYS_RELEASE が無い注意が出ない");
+  const csv = K.toCsv(K.parseKev(samples["le.kev"]));
+  ok(csv.includes(",THRUNNING,"), "CSV の名前が版の定義で付かない");
 }
 // ---- 3c. ヘッダ: 行のキー(区切りを含む)と値をそのままつなぐ
 {
@@ -139,8 +132,8 @@ else {
   ok(same(K.buildKev(doc).subarray(0, text.length), Uint8Array.from(text, (c) => c.charCodeAt(0))), "ヘッダがつないだ文字列と違う");
   doc.header[1].key = doc.header[1].key.replace(/::$/, ":"); // 区切りを崩すと、その項目はキーとして読まれない
   ok(K.check(doc).some(([, m]) => /VER_MAJOR/.test(m)), "区切りを崩した VER_MAJOR に気づかない");
-  const le = (keep) => ({ ...K.newDoc(), header: K.newDoc().header.map((x) => (x.key.startsWith(defs.header.little_endian) ? { ...x, on: keep } : x)) });
-  ok(K.check(le(false)).some(([, m]) => m.includes(defs.header.big_endian)), "エンディアンのキーが無いのに注意が出ない");
+  const le = (keep) => ({ ...K.newDoc(), header: K.newDoc().header.map((x) => (x.key.startsWith(HK.little_endian) ? { ...x, on: keep } : x)) });
+  ok(K.check(le(false)).some(([, m]) => m.includes(HK.big_endian)), "エンディアンのキーが無いのに注意が出ない");
   ok(K.check(K.parseKev(samples["be.kev"])).some(([, m]) => m.includes("ビッグエンディアン")), "ビッグエンディアンの注意が出ない");
   const d2 = K.parseKev(samples["junk.kev"]);
   ok(d2.header[0].key === "" && d2.header[0].value === "xyz", "キーより前のバイトの行");

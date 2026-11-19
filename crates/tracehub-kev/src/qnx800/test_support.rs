@@ -1124,7 +1124,10 @@ pub mod scenarios {
         fn unknown_events_have_unknown_display_status() {
             use crate::model::DisplayStatus;
             use crate::semantic_id::EventId;
-            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/kev/data/unknown_event.csv");
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/kev/qnx800/data/unknown_event.csv"
+            );
             let kev = crate::parse(&kev_bytes(&std::fs::read_to_string(path).unwrap())).unwrap();
             let status = |class: u8, event: u16| {
                 let ev = kev

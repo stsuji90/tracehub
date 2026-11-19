@@ -29,6 +29,7 @@ python tests/kev/tools/gen_qnx_def.py --sdp inputs/sdp-headers --table inputs/do
 ```
 
 - 版はヘッダの `_NTO_VERSION` から決まり、`crates/tracehub-kev/src/qnx<版>/def.rs` に書かれる(例: 800 → `qnx800`)。
+- 同時に kevedit の定義 `tests/kev/qnx<版>/kevedit_defs.json` を書き、すべての版の定義を kevedit.html・kevcsv.py に埋め込み直す。
 - def.rs は semantic_id.rs の定数を名前で参照する(64 ビット版は `名前_64`)。**ビルドで「semantic_id::xxx::NAME が無い」と出たら、semantic_id.rs の該当モジュールの末尾に定数を足す**(番号はそのモジュールの最大 + 1)。クラスを足すときは `ClassId` の定数と、名前の一覧 `ClassId::ALL` の両方に足す。
 - 前の版の def.rs と差分をとり、変わった点(番号の付け替え、名前の追加・削除、ビット配置)を把握する。名前が同じで意味が変わったものがあれば、semantic_id.rs に新しい ID を足すかを判断する(意味が同じなら同じ ID)。
 - ヘッダの書き方が変わって生成スクリプトが値を取れないときは、スクリプトを直す(ヘッダの定義名で引く。値を書き込まない)。
@@ -38,6 +39,8 @@ python tests/kev/tools/gen_qnx_def.py --sdp inputs/sdp-headers --table inputs/do
 1. 前の版のディレクトリ(例: `qnx800/`)を複製して `qnx<版>/` を作る。def.rs は 2 で作ったものを使う。
 2. `model.rs` の `QnxVersion` に版を足し、`from_release()`(`TRACE_SYS_RELEASE` の値 → 版)と `name()` を足す。
 3. `lib.rs` の `match version` に新しい版の腕を足す(`parse`・`decode`・`class_name`・`event_name`・`traceprinter::write`)。
+- 試験データ: `tests/kev/qnx<版>/data/` に、その版の小さな場面の CSV を置く(前の版のものを写し、番号・TRACE_SYS_RELEASE・トレースバッファの枠をその版に合わせる)。
+- kevtool: `tests/kev/tools/kevtool/src/main.rs` の `VERSIONS` と `main` の match に、その版の `qnx<版>::test_support` を足す。
 4. `lib.rs` の `pub mod qnx<版> { ... }` でモジュールを宣言し、`qnx<版>/event_parser.rs` の `semantic_ids`・`internal_ids`・`internal_class` を確かめる。クラスの増減があれば直す。
 5. ビルドが通るまで直す(`cargo build`)。
 
@@ -85,11 +88,11 @@ traceprinter が行を出さないイベントも、書式の無い行 `ev(ク�
 ## 5. traceprinter と比べて直す
 
 ```
-python tests/kev/tools/compare.py --traceprinter <traceprinter の場所>
+python tests/kev/tools/compare.py --qnx <版> --traceprinter <その版の traceprinter の場所>
 ```
 
 - 生成器(`qnx<版>/test_support.rs` の scenarios)は args.rs と def.rs の全イベントについて、語数・文字列・値の名前を変えた変種を作る。kevcsv.py で kev にして、traceprinter と tracehub の出力をバイト単位で比べる。
-- 違いがあると、最初の違う行が出る。`target/compare/out/` に両方の出力があるので、差分を見て args.rs を直す。
+- 違いがあると、最初の違う行が出る。`target/compare/qnx<版>/out/` に両方の出力があるので、差分を見て args.rs を直す。
 - よくある違いと直し方:
 
 | 違い | 直す所 |
@@ -106,7 +109,14 @@ python tests/kev/tools/compare.py --traceprinter <traceprinter の場所>
 ## 6. 仕上げ
 
 1. `cargo fmt --all`、`cargo clippy --all-targets`、`cargo test` が通る。
-2. `python tests/kev/tools/gen_qnx_def.py ... --check` で def.rs が生成結果と同じ。
-3. `python tests/kev/tools/compare.py` がすべて一致する。
+2. `python tests/kev/tools/gen_qnx_def.py ... --check` で def.rs・kevedit の定義・その埋め込みが生成結果と同じ。
+3. `python tests/kev/tools/compare.py --qnx <版>` がすべて一致する。
 4. 実機で取った kev(fast と wide)を `--kev-dir` で比べ、すべて一致する。
 5. 設計書の「版に依存する部分」に変わったことがあれば書き足す。
+
+## 7. 版のサポートを切る
+
+1. `crates/tracehub-kev/src/qnx<版>/` と `tests/kev/qnx<版>/` を消す。
+2. `lib.rs` の `pub mod qnx<版>` と `match version` の腕、`model.rs` の `QnxVersion` の版、kevtool の `VERSIONS` と match の腕を消す。
+3. `python tests/kev/tools/gen_qnx_def.py --embed-only` で kevedit の定義を埋め込み直す。
+4. semantic_id.rs の ID は消さない(番号を使い回さないため)。

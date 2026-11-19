@@ -72,13 +72,15 @@ tracehub/
           test_support.rs      試験・確認用のコード: 合成データの生成と確認用のイベント一覧(§14。tests/kev/tools/kevtool が呼ぶ)
   tests/
     kev/                       kev 用の道具と試験データ(形式ごとにディレクトリを分ける)
-      tools/
-        gen_qnx_def.py         SDP のヘッダと TableOfEvents から def.rs を生成する
+      tools/                   道具(版に共通。版は --qnx で選ぶ)
+        gen_qnx_def.py         SDP のヘッダと TableOfEvents から def.rs と kevedit の定義を生成する
         compare.py             traceprinter と tracehub の出力を比べる
         event_catalog.py       確認用のイベント一覧を作る(TableOfEvents・比較の結果・実機の kev と並べる)
         kevtool/               合成データ・確認用の一覧を書き出す小さな実行ファイル(compare.py・event_catalog.py が呼ぶ。中身は test_support.rs)
-        kevedit/               試験用の kev を CSV から作る道具(kevedit.html、kevcsv.py、CSV_FORMAT.md)
-      data/                    試験用の合成データ(小さな場面の CSV)
+        kevedit/               kev を見る・直す道具(kevedit.html、kevcsv.py、CSV_FORMAT.md)
+      qnx800/                  QNX 8.0 の試験データ(版のサポートを切るときはディレクトリごと消す)
+        data/                  小さな場面の CSV
+        kevedit_defs.json      kevedit の定義(生成ファイル)
   docs/
     design.md                  この文書
     qnx-version-guide.md       QNX の版の定義をそろえる手順(別の作業者向け)
@@ -92,6 +94,8 @@ tracehub/
 | 版に共通(と仮定する) | 版に依存する |
 |---|---|
 | ヘッダの書式、syspage の位置、スロットの大きさ、トレースバッファの枠、merge と combine の規則、書式の部品(tp_format.rs) | header のビット配置、内部 ID の値、内部 ID → セマンティック ID の対応、書式、traceprinter の表示文字列 |
+
+トレースバッファの枠は、QNX 7.1 では BUFFER_END が無い可能性がある(未確認)。版を足すときに traceprinter で確かめる。
 
 - 定義(def.rs・args.rs)とロジックを分ける。ロジックは定義の名前を参照し、数値や表示文字列を持たない。
 - 版を足すときは、`qnxNNN/` を足して、版の enum(`QnxVersion`)に 1 つ加える。
@@ -542,10 +546,10 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 | 種類 | 内容 | 実行 |
 |---|---|---|
 | 単体試験 | ヘッダ・merge・combine・CONTROL の点検・書式・セマンティック ID・合成データの枠 | `cargo test` |
-| 合成データ | 生成器(全イベントの網羅、語が足りないイベント、窓、ORPHAN の位置、SLOG2、4 CPU の一周)と tests/kev/data の小さな場面を、kevcsv.py で kev にして traceprinter の出力とバイト単位で比べる | `python tests/kev/tools/compare.py` |
+| 合成データ | 生成器(全イベントの網羅、語が足りないイベント、窓、ORPHAN の位置、SLOG2、4 CPU の一周)と tests/kev/qnx<版>/data の小さな場面を、kevcsv.py で kev にして traceprinter の出力とバイト単位で比べる | `python tests/kev/tools/compare.py [--qnx 800]` |
 | 実機の kev | 実機でカーネルコールなどを呼ぶプログラムを動かし、fast と wide の 2 種類を取って同じく比べる。仕上げとして最後に行う | `python tests/kev/tools/compare.py --kev-dir <DIR>` |
 
-- traceprinter の場所は `--traceprinter` か環境変数 `TRACEHUB_TRACEPRINTER`、実機の kev の置き場所は `--kev-dir` か `TRACEHUB_KEV_DIR`。
+- 版は `--qnx`(省略時は最新の版)。traceprinter の場所は `--traceprinter` か環境変数 `TRACEHUB_TRACEPRINTER_<版>`(無ければ `TRACEHUB_TRACEPRINTER`)、実機の kev の置き場所は `--kev-dir` か `TRACEHUB_KEV_DIR_<版>`(無ければ `TRACEHUB_KEV_DIR`)。
 - 実機で取りにくいイベントは、合成データで確かめる。
 - traceprinter の出力と実機の kev は、リポジトリに入れない。
 
@@ -553,10 +557,10 @@ tracehub traceprinter <kev ファイル> <出力ファイル>
 
 ```
 python tests/kev/tools/compare.py
-python tests/kev/tools/event_catalog.py --table <TableOfEvents.txt> [--kev-dir <DIR>]
+python tests/kev/tools/event_catalog.py [--qnx 800] --table <TableOfEvents.txt> [--kev-dir <DIR>]
 ```
 
-`target/event_catalog/` に、セマンティック ID ごとに 1 行の `events.csv` と、件数のまとめの `summary.md` を作る(TableOfEvents の文を含むので、リポジトリに入れない)。
+`target/event_catalog/qnx<版>/` に、セマンティック ID ごとに 1 行の `events.csv` と、件数のまとめの `summary.md` を作る(TableOfEvents の文を含むので、リポジトリに入れない)。
 
 | 列 | 内容 |
 |---|---|

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>kevedit</title>
-<!-- kev(QNX のカーネルトレース)を 1 スロットずつ編集する。定義は下の <script id="defs"> に埋め込んである(kevcsv.py の DEFS と同じ内容) -->
+<!-- kev(QNX のカーネルトレース)を 1 スロットずつ見る・直す。版ごとの定義は下の <script id="defs"> に埋め込んである(生成部分) -->
 <style>
   :root {
     --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #d9d9de; --head: #eef0f3;
@@ -50,14 +50,6 @@
   .pager { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
   .wrap { overflow: auto; max-height: 72vh; border: 1px solid var(--line); }
   .drop { outline: 3px dashed var(--accent); outline-offset: -6px; }
-  .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 8px; }
-  #bufInfo table { margin-top: 4px; }
-  #bufInfo .wrap { max-height: 30vh; }
-  #bufInfo tr.jump { cursor: pointer; }
-  #bufInfo tr.jump:hover td { background: var(--head); }
-  #bufInfo td.bad { color: var(--warn); }
-  tr.hit td { animation: hit 1.6s ease-out; }
-  @keyframes hit { from { background: var(--warnbg); } to { background: transparent; } }
 </style>
 </head>
 <body>
@@ -65,6 +57,7 @@
   <h1>kevedit</h1>
   <button id="bOpen" title="kev または CSV(拡張子 .csv)を開く。ページにファイルを落としても開けます">開く</button>
   <button id="bNew">新規</button>
+  <label title="新規作成するときの QNX の版(開いたファイルの版はヘッダの TRACE_SYS_RELEASE から決まる)">版 <select id="newVer"></select></label>
   <span class="sep"></span>
   <label>名前 <input id="fname" class="w20" value="edited"></label>
   <button id="bSaveKev">kev を保存</button>
@@ -86,13 +79,6 @@
   <h2>syspage</h2>
   <p id="sys"></p>
 
-  <h2>トレースバッファ</h2>
-  <div class="tools">
-    <button id="bAddBuf" title="スロットの末尾(新規の空行より前)に TIME・BUFFER・BUFFER_END の 3 行を足す。CPU と時刻は直前の有効なスロットから">トレースバッファ追加</button>
-    <button id="bFix" title="BUFFER_END で閉じたトレースバッファの、BUFFER のスロット数を実際の数(TIME から BUFFER_END まで)にする">バッファ内スロット数修正</button>
-  </div>
-  <div id="bufInfo"></div>
-
   <h2>スロット</h2>
   <div class="pager" id="pagerTop"></div>
   <div class="wrap"><table id="slots">
@@ -109,107 +95,102 @@
   <p><button id="bAddRows"></button></p>
 </main>
 
-<!-- 定義(QNX 8.0 の sys/trace.h などから取った値)。kevcsv.py の DEFS と同じ内容にしておく -->
+<!-- 版ごとの定義(生成部分。tests/kev/tools/gen_qnx_def.py が tests/kev/qnx*/kevedit_defs.json から埋め込む。手で編集しない) -->
 <script id="defs" type="application/json">
 {
- "release": "8.0",
- "slot_bytes": 16,
- "layout": {"event": {"shift": 0, "mask": 1023}, "class": {"shift": 10, "mask": 31}, "flags": {"shift": 16, "mask": 255}, "cpu": {"shift": 24, "mask": 63}, "struct": {"shift": 30, "mask": 3}},
- "structs": [[0, "S"], [1, "CB"], [2, "CC"], [3, "CE"]],
- "header": {"prefix": "TRACE_", "postfix": "::", "begin": "TRACE_HEADER_BEGIN", "end": "TRACE_HEADER_END", "little_endian": "TRACE_LITTLE_ENDIAN", "big_endian": "TRACE_BIG_ENDIAN", "syspage_len": "TRACE_SYSPAGE_LEN", "ver_major": "TRACE_VER_MAJOR", "ver_minor": "TRACE_VER_MINOR"},
- "new_header": [["TRACE_HEADER_BEGIN", ""], ["TRACE_VER_MAJOR", "2"], ["TRACE_VER_MINOR", "01"], ["TRACE_LITTLE_ENDIAN", "TRUE"], ["TRACE_ENCODING", "16 byte events"], ["TRACE_CYCLES_PER_SEC", "19200000"], ["TRACE_CPU_NUM", "1"], ["TRACE_SYS_RELEASE", "8.0.0"], ["TRACE_SYSPAGE_LEN", "0"], ["TRACE_HEADER_END", ""]],
- "control": {"class": 1, "time": 1, "buffer": 2, "buffer_end": 4, "words": {"time_msb": 0, "time_lsb": 1, "buffer_sequence": 0, "buffer_num_events": 1, "dropped_count": 0}},
- "cookie": 3873892070,
- "wrap_threshold": 2147483648,
- "classes": [
-  {"value": 1, "name": "CONTROL", "bit64": 0, "events": [
-   [1, "TIME"], [2, "BUFFER"], [4, "BUFFER_END"], [8, "DROPPED"]
-  ]},
-  {"value": 2, "name": "KER_CALL", "bit64": 512, "events": [
-   [0, "NOP:enter"], [128, "NOP:exit"], [256, "NOP:int"], [1, "TRACE_EVENT:enter"], [129, "TRACE_EVENT:exit"], [257, "TRACE_EVENT:int"],
-   [2, "RING0:enter"], [130, "RING0:exit"], [258, "RING0:int"], [3, "CACHE_CONTROL:enter"], [131, "CACHE_CONTROL:exit"], [259, "CACHE_CONTROL:int"],
-   [4, "SYS_SRANDOM:enter"], [132, "SYS_SRANDOM:exit"], [260, "SYS_SRANDOM:int"], [5, "MSG_REGISTER_EVENT:enter"], [133, "MSG_REGISTER_EVENT:exit"], [261, "MSG_REGISTER_EVENT:int"],
-   [6, "MSG_SEND_PULSEPTR:enter"], [134, "MSG_SEND_PULSEPTR:exit"], [262, "MSG_SEND_PULSEPTR:int"], [7, "SYS_CPUPAGE_GET:enter"], [135, "SYS_CPUPAGE_GET:exit"], [263, "SYS_CPUPAGE_GET:int"],
-   [8, "SYS_CPUPAGE_SET:enter"], [136, "SYS_CPUPAGE_SET:exit"], [264, "SYS_CPUPAGE_SET:int"], [9, "MSG_PAUSE:enter"], [137, "MSG_PAUSE:exit"], [265, "MSG_PAUSE:int"],
-   [10, "MSG_CURRENT:enter"], [138, "MSG_CURRENT:exit"], [266, "MSG_CURRENT:int"], [11, "MSG_SENDV:enter"], [139, "MSG_SENDV:exit"], [267, "MSG_SENDV:int"],
-   [12, "MSG_SENDVNC:enter"], [140, "MSG_SENDVNC:exit"], [268, "MSG_SENDVNC:int"], [13, "MSG_ERROR:enter"], [141, "MSG_ERROR:exit"], [269, "MSG_ERROR:int"],
-   [14, "MSG_RECEIVEV:enter"], [142, "MSG_RECEIVEV:exit"], [270, "MSG_RECEIVEV:int"], [15, "MSG_REPLYV:enter"], [143, "MSG_REPLYV:exit"], [271, "MSG_REPLYV:int"],
-   [16, "MSG_READV:enter"], [144, "MSG_READV:exit"], [272, "MSG_READV:int"], [17, "MSG_WRITEV:enter"], [145, "MSG_WRITEV:exit"], [273, "MSG_WRITEV:int"],
-   [19, "MSG_INFO:enter"], [147, "MSG_INFO:exit"], [275, "MSG_INFO:int"], [20, "MSG_SEND_PULSE:enter"], [148, "MSG_SEND_PULSE:exit"], [276, "MSG_SEND_PULSE:int"],
-   [21, "MSG_DELIVER_EVENT:enter"], [149, "MSG_DELIVER_EVENT:exit"], [277, "MSG_DELIVER_EVENT:int"], [24, "MSG_RECEIVEPULSEV:enter"], [152, "MSG_RECEIVEPULSEV:exit"], [280, "MSG_RECEIVEPULSEV:int"],
-   [25, "MSG_VERIFY_EVENT:enter"], [153, "MSG_VERIFY_EVENT:exit"], [281, "MSG_VERIFY_EVENT:int"], [26, "SIGNAL_KILL:enter"], [154, "SIGNAL_KILL:exit"], [282, "SIGNAL_KILL:int"],
-   [27, "SIGNAL_RETURN:enter"], [155, "SIGNAL_RETURN:exit"], [283, "SIGNAL_RETURN:int"], [29, "SIGNAL_ACTION:enter"], [157, "SIGNAL_ACTION:exit"], [285, "SIGNAL_ACTION:int"],
-   [30, "SIGNAL_PROCMASK:enter"], [158, "SIGNAL_PROCMASK:exit"], [286, "SIGNAL_PROCMASK:int"], [31, "SIGNAL_SUSPEND:enter"], [159, "SIGNAL_SUSPEND:exit"], [287, "SIGNAL_SUSPEND:int"],
-   [32, "SIGNAL_WAITINFO:enter"], [160, "SIGNAL_WAITINFO:exit"], [288, "SIGNAL_WAITINFO:int"], [33, "SIGNAL_KILL_SIGVAL:enter"], [161, "SIGNAL_KILL_SIGVAL:exit"], [289, "SIGNAL_KILL_SIGVAL:int"],
-   [35, "CHANNEL_CREATE:enter"], [163, "CHANNEL_CREATE:exit"], [291, "CHANNEL_CREATE:int"], [36, "CHANNEL_DESTROY:enter"], [164, "CHANNEL_DESTROY:exit"], [292, "CHANNEL_DESTROY:int"],
-   [37, "CHANNEL_CTL:enter"], [165, "CHANNEL_CTL:exit"], [293, "CHANNEL_CTL:int"], [39, "CONNECT_ATTACH:enter"], [167, "CONNECT_ATTACH:exit"], [295, "CONNECT_ATTACH:int"],
-   [40, "CONNECT_DETACH:enter"], [168, "CONNECT_DETACH:exit"], [296, "CONNECT_DETACH:int"], [41, "CONNECT_SERVER_INFO:enter"], [169, "CONNECT_SERVER_INFO:exit"], [297, "CONNECT_SERVER_INFO:int"],
-   [42, "CONNECT_CLIENT_INFO:enter"], [170, "CONNECT_CLIENT_INFO:exit"], [298, "CONNECT_CLIENT_INFO:int"], [43, "CONNECT_FLAGS:enter"], [171, "CONNECT_FLAGS:exit"], [299, "CONNECT_FLAGS:int"],
-   [44, "CONNECT_DUPFD:enter"], [172, "CONNECT_DUPFD:exit"], [300, "CONNECT_DUPFD:int"], [46, "THREAD_CREATE:enter"], [174, "THREAD_CREATE:exit"], [302, "THREAD_CREATE:int"],
-   [47, "THREAD_DESTROY:enter"], [175, "THREAD_DESTROY:exit"], [303, "THREAD_DESTROY:int"], [49, "THREAD_DETACH:enter"], [177, "THREAD_DETACH:exit"], [305, "THREAD_DETACH:int"],
-   [50, "THREAD_JOIN:enter"], [178, "THREAD_JOIN:exit"], [306, "THREAD_JOIN:int"], [51, "THREAD_CANCEL:enter"], [179, "THREAD_CANCEL:exit"], [307, "THREAD_CANCEL:int"],
-   [52, "THREAD_CTL:enter"], [180, "THREAD_CTL:exit"], [308, "THREAD_CTL:int"], [53, "THREAD_CTLEXT:enter"], [181, "THREAD_CTLEXT:exit"], [309, "THREAD_CTLEXT:int"],
-   [55, "INTERRUPT_ATTACH:enter"], [183, "INTERRUPT_ATTACH:exit"], [311, "INTERRUPT_ATTACH:int"], [56, "INTERRUPT_QUERY:enter"], [184, "INTERRUPT_QUERY:exit"], [312, "INTERRUPT_QUERY:int"],
-   [57, "INTERRUPT_DETACH:enter"], [185, "INTERRUPT_DETACH:exit"], [313, "INTERRUPT_DETACH:int"], [58, "INTERRUPT_WAIT:enter"], [186, "INTERRUPT_WAIT:exit"], [314, "INTERRUPT_WAIT:int"],
-   [59, "INTERRUPT_MASK:enter"], [187, "INTERRUPT_MASK:exit"], [315, "INTERRUPT_MASK:int"], [60, "INTERRUPT_UNMASK:enter"], [188, "INTERRUPT_UNMASK:exit"], [316, "INTERRUPT_UNMASK:int"],
-   [61, "INTERRUPT_UNBLOCK:enter"], [189, "INTERRUPT_UNBLOCK:exit"], [317, "INTERRUPT_UNBLOCK:int"], [62, "INTERRUPT_CTL:enter"], [190, "INTERRUPT_CTL:exit"], [318, "INTERRUPT_CTL:int"],
-   [65, "CLOCK_TIME:enter"], [193, "CLOCK_TIME:exit"], [321, "CLOCK_TIME:int"], [66, "CLOCK_ADJUST:enter"], [194, "CLOCK_ADJUST:exit"], [322, "CLOCK_ADJUST:int"],
-   [67, "CLOCK_PERIOD:enter"], [195, "CLOCK_PERIOD:exit"], [323, "CLOCK_PERIOD:int"], [68, "CLOCK_ID:enter"], [196, "CLOCK_ID:exit"], [324, "CLOCK_ID:int"],
-   [70, "TIMER_CREATE:enter"], [198, "TIMER_CREATE:exit"], [326, "TIMER_CREATE:int"], [71, "TIMER_DESTROY:enter"], [199, "TIMER_DESTROY:exit"], [327, "TIMER_DESTROY:int"],
-   [72, "TIMER_SETTIME:enter"], [200, "TIMER_SETTIME:exit"], [328, "TIMER_SETTIME:int"], [73, "TIMER_INFO:enter"], [201, "TIMER_INFO:exit"], [329, "TIMER_INFO:int"],
-   [74, "TIMER_ALARM:enter"], [202, "TIMER_ALARM:exit"], [330, "TIMER_ALARM:int"], [75, "TIMER_TIMEOUT:enter"], [203, "TIMER_TIMEOUT:exit"], [331, "TIMER_TIMEOUT:int"],
-   [76, "TIMER_DELEGATE:enter"], [204, "TIMER_DELEGATE:exit"], [332, "TIMER_DELEGATE:int"], [77, "SYNC_RWLOCK:enter"], [205, "SYNC_RWLOCK:exit"], [333, "SYNC_RWLOCK:int"],
-   [78, "SYNC_CREATE:enter"], [206, "SYNC_CREATE:exit"], [334, "SYNC_CREATE:int"], [79, "SYNC_DESTROY:enter"], [207, "SYNC_DESTROY:exit"], [335, "SYNC_DESTROY:int"],
-   [80, "SYNC_MUTEX_LOCK:enter"], [208, "SYNC_MUTEX_LOCK:exit"], [336, "SYNC_MUTEX_LOCK:int"], [81, "SYNC_MUTEX_UNLOCK:enter"], [209, "SYNC_MUTEX_UNLOCK:exit"], [337, "SYNC_MUTEX_UNLOCK:int"],
-   [82, "SYNC_CONDVAR_WAIT:enter"], [210, "SYNC_CONDVAR_WAIT:exit"], [338, "SYNC_CONDVAR_WAIT:int"], [83, "SYNC_CONDVAR_SIGNAL:enter"], [211, "SYNC_CONDVAR_SIGNAL:exit"], [339, "SYNC_CONDVAR_SIGNAL:int"],
-   [84, "SYNC_SEM_POST:enter"], [212, "SYNC_SEM_POST:exit"], [340, "SYNC_SEM_POST:int"], [85, "SYNC_SEM_WAIT:enter"], [213, "SYNC_SEM_WAIT:exit"], [341, "SYNC_SEM_WAIT:int"],
-   [86, "SYNC_CTL:enter"], [214, "SYNC_CTL:exit"], [342, "SYNC_CTL:int"], [87, "SYNC_BARRIER_WAIT:enter"], [215, "SYNC_BARRIER_WAIT:exit"], [343, "SYNC_BARRIER_WAIT:int"],
-   [88, "SCHED_GET:enter"], [216, "SCHED_GET:exit"], [344, "SCHED_GET:int"], [89, "SCHED_SET:enter"], [217, "SCHED_SET:exit"], [345, "SCHED_SET:int"],
-   [90, "SCHED_YIELD:enter"], [218, "SCHED_YIELD:exit"], [346, "SCHED_YIELD:int"], [91, "SCHED_INFO:enter"], [219, "SCHED_INFO:exit"], [347, "SCHED_INFO:int"],
-   [92, "SCHED_CTL:enter"], [220, "SCHED_CTL:exit"], [348, "SCHED_CTL:int"], [93, "MSG_QUEUE_OPEN:enter"], [221, "MSG_QUEUE_OPEN:exit"], [349, "MSG_QUEUE_OPEN:int"],
-   [94, "MSG_QUEUE_SEND:enter"], [222, "MSG_QUEUE_SEND:exit"], [350, "MSG_QUEUE_SEND:int"], [95, "MSG_QUEUE_RECEIVE:enter"], [223, "MSG_QUEUE_RECEIVE:exit"], [351, "MSG_QUEUE_RECEIVE:int"],
-   [96, "MSG_QUEUE_CLOSE:enter"], [224, "MSG_QUEUE_CLOSE:exit"], [352, "MSG_QUEUE_CLOSE:int"], [97, "MSG_QUEUE_CTL:enter"], [225, "MSG_QUEUE_CTL:exit"], [353, "MSG_QUEUE_CTL:int"],
-   [98, "PIPE_OPEN:enter"], [226, "PIPE_OPEN:exit"], [354, "PIPE_OPEN:int"], [99, "PIPE_CTL:enter"], [227, "PIPE_CTL:exit"], [355, "PIPE_CTL:int"],
-   [100, "PIPE_CLOSE:enter"], [228, "PIPE_CLOSE:exit"], [356, "PIPE_CLOSE:int"], [104, "SYNC_TYPE_DESTROY:enter"], [232, "SYNC_TYPE_DESTROY:exit"], [360, "SYNC_TYPE_DESTROY:int"],
-   [105, "TEST:enter"], [233, "TEST:exit"], [361, "TEST:int"], [106, "SYS_CUSTOM:enter"], [234, "SYS_CUSTOM:exit"], [362, "SYS_CUSTOM:int"],
-   [107, "BAD:enter"], [235, "BAD:exit"], [363, "BAD:int"]
-  ]},
-  {"value": 3, "name": "INT", "bit64": 0, "events": [
-   [7, "DELIVER"]
-  ]},
-  {"value": 4, "name": "PR_TH", "bit64": 0, "events": [
-   [0, "THDEAD"], [1, "THRUNNING"], [2, "THREADY"], [3, "THSTOPPED"], [4, "THSEND"], [5, "THRECEIVE"],
-   [6, "THREPLY"], [7, "THMQ_SEND"], [8, "THMQ_RECEIVE"], [9, "THWAITPAGE"], [10, "THSIGSUSPEND"], [11, "THSIGWAITINFO"],
-   [12, "THNANOSLEEP"], [13, "THMUTEX"], [14, "THCONDVAR"], [15, "THJOIN"], [16, "THINTR"], [17, "THSEM"],
-   [18, "THWAITCTX"], [19, "THRWLOCK_READ"], [20, "THRWLOCK_WRITE"], [21, "THBARRIER"], [22, "THPIPE"], [24, "THCREATE"],
-   [25, "THDESTROY"], [26, "THMUON_MUTEX"], [27, "THTRACEBUFFER"], [28, "THINTR_ATTACH_EV"], [29, "THTIMER_DELEGATE"], [64, "CREATE_P"],
-   [87, "CREATE_VT"], [88, "DESTROY_VT"], [128, "DESTROY_P"], [192, "CREATE_P_NAME"], [256, "DESTROY_P_NAME"], [320, "NAME_T"]
-  ]},
-  {"value": 5, "name": "SYSTEM", "bit64": 512, "events": [
-   [1, "RESERVED"], [2, "PATHMGR"], [3, "APS_NAME"], [4, "APS_BUDGETS"], [5, "APS_BNKR"], [6, "MMAP"],
-   [7, "MUNMAP"], [8, "MAPNAME"], [9, "ADDRESS"], [10, "FUNC_ENTER"], [11, "FUNC_EXIT"], [12, "SLOG"],
-   [13, "DEFRAG_START"], [14, "RUNSTATE"], [15, "POWER"], [16, "IPI"], [17, "PAGEWAIT"], [18, "TIMER"],
-   [19, "DEFRAG_END"], [20, "PROFILE"], [21, "MAPNAME_64"], [22, "APS_PSTATS"], [23, "APS_OSTATS"], [24, "APS_INFO"],
-   [25, "APS_JOIN"], [26, "APS_THREAD"], [27, "APS_PROCESS"], [28, "SCHED_CONF"], [29, "IST_ATTACH"], [30, "IST_DETACH"],
-   [31, "PCTRACE"]
-  ]},
-  {"value": 6, "name": "USER", "bit64": 0, "events": [
-  ]},
-  {"value": 7, "name": "COMM", "bit64": 0, "events": [
-   [0, "SMSG"], [1, "SPULSE"], [2, "RMSG"], [3, "RPULSE"], [4, "SPULSE_EXE"], [5, "SPULSE_DIS"],
-   [6, "SPULSE_DEA"], [7, "SPULSE_UN"], [8, "SPULSE_QUN"], [9, "SIGNAL"], [10, "REPLY"], [11, "ERROR"]
-  ]},
-  {"value": 8, "name": "QUIP", "bit64": 0, "events": [
-  ]},
-  {"value": 9, "name": "SEC", "bit64": 0, "events": [
-   [0, "ABLE"], [1, "ABLE_LOOKUP"], [2, "PATH_ATTACH"], [3, "QNET_CONNECT"], [4, "PERM_LOOKUP"], [5, "PERM_TEST"],
-   [6, "UNREG_EVENT"], [7, "OPEN_EVENT"]
-  ]},
-  {"value": 10, "name": "QVM", "bit64": 0, "events": [
-   [0, "GUEST_ENTER"], [1, "GUEST_EXIT"], [2, "CREATE_VCPU_THREAD"], [3, "RAISE_INTR"], [4, "LOWER_INTR"], [5, "TIMER_CREATE"],
-   [6, "TIMER_FIRE"], [7, "CYCLES"]
-  ]}
- ]
+ "8.0": {
+  "release": "8.0",
+  "layout": {"event": {"shift": 0, "mask": 1023}, "class": {"shift": 10, "mask": 31}, "flags": {"shift": 16, "mask": 255}, "cpu": {"shift": 24, "mask": 63}, "struct": {"shift": 30, "mask": 3}},
+  "structs": [[0, "S"], [1, "CB"], [2, "CC"], [3, "CE"]],
+  "new_header": [["TRACE_HEADER_BEGIN", ""], ["TRACE_VER_MAJOR", "2"], ["TRACE_VER_MINOR", "01"], ["TRACE_LITTLE_ENDIAN", "TRUE"], ["TRACE_ENCODING", "16 byte events"], ["TRACE_CYCLES_PER_SEC", "19200000"], ["TRACE_CPU_NUM", "1"], ["TRACE_SYS_RELEASE", "8.0.0"], ["TRACE_SYSPAGE_LEN", "0"], ["TRACE_HEADER_END", ""]],
+  "classes": [
+   {"value": 1, "name": "CONTROL", "bit64": 0, "events": [
+    [1, "TIME"], [2, "BUFFER"], [4, "BUFFER_END"], [8, "DROPPED"]
+   ]},
+   {"value": 2, "name": "KER_CALL", "bit64": 512, "events": [
+    [0, "NOP:enter"], [128, "NOP:exit"], [256, "NOP:int"], [1, "TRACE_EVENT:enter"], [129, "TRACE_EVENT:exit"], [257, "TRACE_EVENT:int"],
+    [2, "RING0:enter"], [130, "RING0:exit"], [258, "RING0:int"], [3, "CACHE_CONTROL:enter"], [131, "CACHE_CONTROL:exit"], [259, "CACHE_CONTROL:int"],
+    [4, "SYS_SRANDOM:enter"], [132, "SYS_SRANDOM:exit"], [260, "SYS_SRANDOM:int"], [5, "MSG_REGISTER_EVENT:enter"], [133, "MSG_REGISTER_EVENT:exit"], [261, "MSG_REGISTER_EVENT:int"],
+    [6, "MSG_SEND_PULSEPTR:enter"], [134, "MSG_SEND_PULSEPTR:exit"], [262, "MSG_SEND_PULSEPTR:int"], [7, "SYS_CPUPAGE_GET:enter"], [135, "SYS_CPUPAGE_GET:exit"], [263, "SYS_CPUPAGE_GET:int"],
+    [8, "SYS_CPUPAGE_SET:enter"], [136, "SYS_CPUPAGE_SET:exit"], [264, "SYS_CPUPAGE_SET:int"], [9, "MSG_PAUSE:enter"], [137, "MSG_PAUSE:exit"], [265, "MSG_PAUSE:int"],
+    [10, "MSG_CURRENT:enter"], [138, "MSG_CURRENT:exit"], [266, "MSG_CURRENT:int"], [11, "MSG_SENDV:enter"], [139, "MSG_SENDV:exit"], [267, "MSG_SENDV:int"],
+    [12, "MSG_SENDVNC:enter"], [140, "MSG_SENDVNC:exit"], [268, "MSG_SENDVNC:int"], [13, "MSG_ERROR:enter"], [141, "MSG_ERROR:exit"], [269, "MSG_ERROR:int"],
+    [14, "MSG_RECEIVEV:enter"], [142, "MSG_RECEIVEV:exit"], [270, "MSG_RECEIVEV:int"], [15, "MSG_REPLYV:enter"], [143, "MSG_REPLYV:exit"], [271, "MSG_REPLYV:int"],
+    [16, "MSG_READV:enter"], [144, "MSG_READV:exit"], [272, "MSG_READV:int"], [17, "MSG_WRITEV:enter"], [145, "MSG_WRITEV:exit"], [273, "MSG_WRITEV:int"],
+    [19, "MSG_INFO:enter"], [147, "MSG_INFO:exit"], [275, "MSG_INFO:int"], [20, "MSG_SEND_PULSE:enter"], [148, "MSG_SEND_PULSE:exit"], [276, "MSG_SEND_PULSE:int"],
+    [21, "MSG_DELIVER_EVENT:enter"], [149, "MSG_DELIVER_EVENT:exit"], [277, "MSG_DELIVER_EVENT:int"], [24, "MSG_RECEIVEPULSEV:enter"], [152, "MSG_RECEIVEPULSEV:exit"], [280, "MSG_RECEIVEPULSEV:int"],
+    [25, "MSG_VERIFY_EVENT:enter"], [153, "MSG_VERIFY_EVENT:exit"], [281, "MSG_VERIFY_EVENT:int"], [26, "SIGNAL_KILL:enter"], [154, "SIGNAL_KILL:exit"], [282, "SIGNAL_KILL:int"],
+    [27, "SIGNAL_RETURN:enter"], [155, "SIGNAL_RETURN:exit"], [283, "SIGNAL_RETURN:int"], [29, "SIGNAL_ACTION:enter"], [157, "SIGNAL_ACTION:exit"], [285, "SIGNAL_ACTION:int"],
+    [30, "SIGNAL_PROCMASK:enter"], [158, "SIGNAL_PROCMASK:exit"], [286, "SIGNAL_PROCMASK:int"], [31, "SIGNAL_SUSPEND:enter"], [159, "SIGNAL_SUSPEND:exit"], [287, "SIGNAL_SUSPEND:int"],
+    [32, "SIGNAL_WAITINFO:enter"], [160, "SIGNAL_WAITINFO:exit"], [288, "SIGNAL_WAITINFO:int"], [33, "SIGNAL_KILL_SIGVAL:enter"], [161, "SIGNAL_KILL_SIGVAL:exit"], [289, "SIGNAL_KILL_SIGVAL:int"],
+    [35, "CHANNEL_CREATE:enter"], [163, "CHANNEL_CREATE:exit"], [291, "CHANNEL_CREATE:int"], [36, "CHANNEL_DESTROY:enter"], [164, "CHANNEL_DESTROY:exit"], [292, "CHANNEL_DESTROY:int"],
+    [37, "CHANNEL_CTL:enter"], [165, "CHANNEL_CTL:exit"], [293, "CHANNEL_CTL:int"], [39, "CONNECT_ATTACH:enter"], [167, "CONNECT_ATTACH:exit"], [295, "CONNECT_ATTACH:int"],
+    [40, "CONNECT_DETACH:enter"], [168, "CONNECT_DETACH:exit"], [296, "CONNECT_DETACH:int"], [41, "CONNECT_SERVER_INFO:enter"], [169, "CONNECT_SERVER_INFO:exit"], [297, "CONNECT_SERVER_INFO:int"],
+    [42, "CONNECT_CLIENT_INFO:enter"], [170, "CONNECT_CLIENT_INFO:exit"], [298, "CONNECT_CLIENT_INFO:int"], [43, "CONNECT_FLAGS:enter"], [171, "CONNECT_FLAGS:exit"], [299, "CONNECT_FLAGS:int"],
+    [44, "CONNECT_DUPFD:enter"], [172, "CONNECT_DUPFD:exit"], [300, "CONNECT_DUPFD:int"], [46, "THREAD_CREATE:enter"], [174, "THREAD_CREATE:exit"], [302, "THREAD_CREATE:int"],
+    [47, "THREAD_DESTROY:enter"], [175, "THREAD_DESTROY:exit"], [303, "THREAD_DESTROY:int"], [49, "THREAD_DETACH:enter"], [177, "THREAD_DETACH:exit"], [305, "THREAD_DETACH:int"],
+    [50, "THREAD_JOIN:enter"], [178, "THREAD_JOIN:exit"], [306, "THREAD_JOIN:int"], [51, "THREAD_CANCEL:enter"], [179, "THREAD_CANCEL:exit"], [307, "THREAD_CANCEL:int"],
+    [52, "THREAD_CTL:enter"], [180, "THREAD_CTL:exit"], [308, "THREAD_CTL:int"], [53, "THREAD_CTLEXT:enter"], [181, "THREAD_CTLEXT:exit"], [309, "THREAD_CTLEXT:int"],
+    [55, "INTERRUPT_ATTACH:enter"], [183, "INTERRUPT_ATTACH:exit"], [311, "INTERRUPT_ATTACH:int"], [56, "INTERRUPT_QUERY:enter"], [184, "INTERRUPT_QUERY:exit"], [312, "INTERRUPT_QUERY:int"],
+    [57, "INTERRUPT_DETACH:enter"], [185, "INTERRUPT_DETACH:exit"], [313, "INTERRUPT_DETACH:int"], [58, "INTERRUPT_WAIT:enter"], [186, "INTERRUPT_WAIT:exit"], [314, "INTERRUPT_WAIT:int"],
+    [59, "INTERRUPT_MASK:enter"], [187, "INTERRUPT_MASK:exit"], [315, "INTERRUPT_MASK:int"], [60, "INTERRUPT_UNMASK:enter"], [188, "INTERRUPT_UNMASK:exit"], [316, "INTERRUPT_UNMASK:int"],
+    [61, "INTERRUPT_UNBLOCK:enter"], [189, "INTERRUPT_UNBLOCK:exit"], [317, "INTERRUPT_UNBLOCK:int"], [62, "INTERRUPT_CTL:enter"], [190, "INTERRUPT_CTL:exit"], [318, "INTERRUPT_CTL:int"],
+    [65, "CLOCK_TIME:enter"], [193, "CLOCK_TIME:exit"], [321, "CLOCK_TIME:int"], [66, "CLOCK_ADJUST:enter"], [194, "CLOCK_ADJUST:exit"], [322, "CLOCK_ADJUST:int"],
+    [67, "CLOCK_PERIOD:enter"], [195, "CLOCK_PERIOD:exit"], [323, "CLOCK_PERIOD:int"], [68, "CLOCK_ID:enter"], [196, "CLOCK_ID:exit"], [324, "CLOCK_ID:int"],
+    [70, "TIMER_CREATE:enter"], [198, "TIMER_CREATE:exit"], [326, "TIMER_CREATE:int"], [71, "TIMER_DESTROY:enter"], [199, "TIMER_DESTROY:exit"], [327, "TIMER_DESTROY:int"],
+    [72, "TIMER_SETTIME:enter"], [200, "TIMER_SETTIME:exit"], [328, "TIMER_SETTIME:int"], [73, "TIMER_INFO:enter"], [201, "TIMER_INFO:exit"], [329, "TIMER_INFO:int"],
+    [74, "TIMER_ALARM:enter"], [202, "TIMER_ALARM:exit"], [330, "TIMER_ALARM:int"], [75, "TIMER_TIMEOUT:enter"], [203, "TIMER_TIMEOUT:exit"], [331, "TIMER_TIMEOUT:int"],
+    [76, "TIMER_DELEGATE:enter"], [204, "TIMER_DELEGATE:exit"], [332, "TIMER_DELEGATE:int"], [77, "SYNC_RWLOCK:enter"], [205, "SYNC_RWLOCK:exit"], [333, "SYNC_RWLOCK:int"],
+    [78, "SYNC_CREATE:enter"], [206, "SYNC_CREATE:exit"], [334, "SYNC_CREATE:int"], [79, "SYNC_DESTROY:enter"], [207, "SYNC_DESTROY:exit"], [335, "SYNC_DESTROY:int"],
+    [80, "SYNC_MUTEX_LOCK:enter"], [208, "SYNC_MUTEX_LOCK:exit"], [336, "SYNC_MUTEX_LOCK:int"], [81, "SYNC_MUTEX_UNLOCK:enter"], [209, "SYNC_MUTEX_UNLOCK:exit"], [337, "SYNC_MUTEX_UNLOCK:int"],
+    [82, "SYNC_CONDVAR_WAIT:enter"], [210, "SYNC_CONDVAR_WAIT:exit"], [338, "SYNC_CONDVAR_WAIT:int"], [83, "SYNC_CONDVAR_SIGNAL:enter"], [211, "SYNC_CONDVAR_SIGNAL:exit"], [339, "SYNC_CONDVAR_SIGNAL:int"],
+    [84, "SYNC_SEM_POST:enter"], [212, "SYNC_SEM_POST:exit"], [340, "SYNC_SEM_POST:int"], [85, "SYNC_SEM_WAIT:enter"], [213, "SYNC_SEM_WAIT:exit"], [341, "SYNC_SEM_WAIT:int"],
+    [86, "SYNC_CTL:enter"], [214, "SYNC_CTL:exit"], [342, "SYNC_CTL:int"], [87, "SYNC_BARRIER_WAIT:enter"], [215, "SYNC_BARRIER_WAIT:exit"], [343, "SYNC_BARRIER_WAIT:int"],
+    [88, "SCHED_GET:enter"], [216, "SCHED_GET:exit"], [344, "SCHED_GET:int"], [89, "SCHED_SET:enter"], [217, "SCHED_SET:exit"], [345, "SCHED_SET:int"],
+    [90, "SCHED_YIELD:enter"], [218, "SCHED_YIELD:exit"], [346, "SCHED_YIELD:int"], [91, "SCHED_INFO:enter"], [219, "SCHED_INFO:exit"], [347, "SCHED_INFO:int"],
+    [92, "SCHED_CTL:enter"], [220, "SCHED_CTL:exit"], [348, "SCHED_CTL:int"], [93, "MSG_QUEUE_OPEN:enter"], [221, "MSG_QUEUE_OPEN:exit"], [349, "MSG_QUEUE_OPEN:int"],
+    [94, "MSG_QUEUE_SEND:enter"], [222, "MSG_QUEUE_SEND:exit"], [350, "MSG_QUEUE_SEND:int"], [95, "MSG_QUEUE_RECEIVE:enter"], [223, "MSG_QUEUE_RECEIVE:exit"], [351, "MSG_QUEUE_RECEIVE:int"],
+    [96, "MSG_QUEUE_CLOSE:enter"], [224, "MSG_QUEUE_CLOSE:exit"], [352, "MSG_QUEUE_CLOSE:int"], [97, "MSG_QUEUE_CTL:enter"], [225, "MSG_QUEUE_CTL:exit"], [353, "MSG_QUEUE_CTL:int"],
+    [98, "PIPE_OPEN:enter"], [226, "PIPE_OPEN:exit"], [354, "PIPE_OPEN:int"], [99, "PIPE_CTL:enter"], [227, "PIPE_CTL:exit"], [355, "PIPE_CTL:int"],
+    [100, "PIPE_CLOSE:enter"], [228, "PIPE_CLOSE:exit"], [356, "PIPE_CLOSE:int"], [104, "SYNC_TYPE_DESTROY:enter"], [232, "SYNC_TYPE_DESTROY:exit"], [360, "SYNC_TYPE_DESTROY:int"],
+    [105, "TEST:enter"], [233, "TEST:exit"], [361, "TEST:int"], [106, "SYS_CUSTOM:enter"], [234, "SYS_CUSTOM:exit"], [362, "SYS_CUSTOM:int"],
+    [107, "BAD:enter"], [235, "BAD:exit"], [363, "BAD:int"]
+   ]},
+   {"value": 3, "name": "INT", "bit64": 0, "events": [
+    [7, "DELIVER"]
+   ]},
+   {"value": 4, "name": "PR_TH", "bit64": 0, "events": [
+    [0, "THDEAD"], [1, "THRUNNING"], [2, "THREADY"], [3, "THSTOPPED"], [4, "THSEND"], [5, "THRECEIVE"],
+    [6, "THREPLY"], [7, "THMQ_SEND"], [8, "THMQ_RECEIVE"], [9, "THWAITPAGE"], [10, "THSIGSUSPEND"], [11, "THSIGWAITINFO"],
+    [12, "THNANOSLEEP"], [13, "THMUTEX"], [14, "THCONDVAR"], [15, "THJOIN"], [16, "THINTR"], [17, "THSEM"],
+    [18, "THWAITCTX"], [19, "THRWLOCK_READ"], [20, "THRWLOCK_WRITE"], [21, "THBARRIER"], [22, "THPIPE"], [24, "THCREATE"],
+    [25, "THDESTROY"], [26, "THMUON_MUTEX"], [27, "THTRACEBUFFER"], [28, "THINTR_ATTACH_EV"], [29, "THTIMER_DELEGATE"], [64, "CREATE_P"],
+    [87, "CREATE_VT"], [88, "DESTROY_VT"], [128, "DESTROY_P"], [192, "CREATE_P_NAME"], [256, "DESTROY_P_NAME"], [320, "NAME_T"]
+   ]},
+   {"value": 5, "name": "SYSTEM", "bit64": 512, "events": [
+    [1, "RESERVED"], [2, "PATHMGR"], [3, "APS_NAME"], [4, "APS_BUDGETS"], [5, "APS_BNKR"], [6, "MMAP"],
+    [7, "MUNMAP"], [8, "MAPNAME"], [9, "ADDRESS"], [10, "FUNC_ENTER"], [11, "FUNC_EXIT"], [12, "SLOG"],
+    [13, "DEFRAG_START"], [14, "RUNSTATE"], [15, "POWER"], [16, "IPI"], [17, "PAGEWAIT"], [18, "TIMER"],
+    [19, "DEFRAG_END"], [20, "PROFILE"], [21, "MAPNAME_64"], [22, "APS_PSTATS"], [23, "APS_OSTATS"], [24, "APS_INFO"],
+    [25, "APS_JOIN"], [26, "APS_THREAD"], [27, "APS_PROCESS"], [28, "SCHED_CONF"], [29, "IST_ATTACH"], [30, "IST_DETACH"],
+    [31, "PCTRACE"]
+   ]},
+   {"value": 6, "name": "USER", "bit64": 0, "events": []},
+   {"value": 7, "name": "COMM", "bit64": 0, "events": [
+    [0, "SMSG"], [1, "SPULSE"], [2, "RMSG"], [3, "RPULSE"], [4, "SPULSE_EXE"], [5, "SPULSE_DIS"],
+    [6, "SPULSE_DEA"], [7, "SPULSE_UN"], [8, "SPULSE_QUN"], [9, "SIGNAL"], [10, "REPLY"], [11, "ERROR"]
+   ]},
+   {"value": 8, "name": "QUIP", "bit64": 0, "events": []},
+   {"value": 9, "name": "SEC", "bit64": 0, "events": [
+    [0, "ABLE"], [1, "ABLE_LOOKUP"], [2, "PATH_ATTACH"], [3, "QNET_CONNECT"], [4, "PERM_LOOKUP"], [5, "PERM_TEST"],
+    [6, "UNREG_EVENT"], [7, "OPEN_EVENT"]
+   ]},
+   {"value": 10, "name": "QVM", "bit64": 0, "events": [
+    [0, "GUEST_ENTER"], [1, "GUEST_EXIT"], [2, "CREATE_VCPU_THREAD"], [3, "RAISE_INTR"], [4, "LOWER_INTR"], [5, "TIMER_CREATE"],
+    [6, "TIMER_FIRE"], [7, "CYCLES"]
+   ]}
+  ]
+ }
 }
 </script>
 <script>
@@ -225,6 +206,13 @@ const CONF = {
   headerScanBytes: 16 << 20, // ヘッダの終わりを探す範囲
   strBytes: 8,               // payload 2 語の文字列のバイト数(payload[0] の文字列欄はここまで入り、4 バイトを超えた分は payload[1] へ)
   wordBytes: 4,              // payload 1 語の文字列のバイト数
+  // kev の書式(版に共通。kevcsv.py の SLOT_BYTES・H と同じ)
+  slotBytes: 16,
+  header: {
+    prefix: "TRACE_", postfix: "::", begin: "TRACE_HEADER_BEGIN", end: "TRACE_HEADER_END",
+    little_endian: "TRACE_LITTLE_ENDIAN", big_endian: "TRACE_BIG_ENDIAN", syspage_len: "TRACE_SYSPAGE_LEN",
+    ver_major: "TRACE_VER_MAJOR", ver_minor: "TRACE_VER_MINOR", release: "TRACE_SYS_RELEASE",
+  },
   csv: {
     on: "on", off: "off",
     sections: { header: "[header]", syspage: "[syspage]", slots: "[slots]" },
@@ -237,21 +225,39 @@ const CONF = {
       "(payload0_str)", "(payload0_dec)", "(payload1_str)", "(payload1_dec)",
     ],
   },
-  // トレースバッファの補助
-  bufferSlots: 1011,         // 1 トレースバッファのスロット数の上限(_TRACELEMENTS。QNX 8.0 の値)
-  bufferSeqStart: 1,         // その CPU に BUFFER が無いときの通番
-  maxBufferRows: 300,        // トレースバッファの一覧に出す行数
 };
 
-function makeCore(D) {
-  const L = D.layout;
+/**
+ * 画面に依存しない部分。ALL = 版ごとの定義({ "8.0": {...}, ... })。
+ * 名前とヘッダ語のフィールドは「今の版」(use で選ぶ)の定義で扱う。開く・新規作成・ヘッダの変更のたびに、
+ * ヘッダの TRACE_SYS_RELEASE から版を選び直す(定義の無い版は最新の版)
+ */
+function makeCore(ALL) {
   const FIELDS = ["struct", "cpu", "class", "event", "flags"];
   const u32 = (x) => x >>> 0;
+  const H = CONF.header;
+  const SB = CONF.slotBytes;
+  const VERSIONS = Object.keys(ALL);
+  const LATEST = VERSIONS[VERSIONS.length - 1];
+
+  // ---- 版
+  let D, L, REST_MASK, structByVal, classByVal;
   const fmask = (f) => u32(L[f].mask << L[f].shift);
-  const FIELD_MASK = FIELDS.reduce((a, f) => u32(a | fmask(f)), 0);
-  const REST_MASK = u32(~FIELD_MASK);
-  const H = D.header;
-  const SB = D.slot_bytes;
+  function use(key) {
+    D = ALL[key]; L = D.layout;
+    REST_MASK = u32(~FIELDS.reduce((a, f) => u32(a | fmask(f)), 0));
+    structByVal = new Map(D.structs.map(([v, n]) => [v, n]));
+    classByVal = new Map();
+    for (const c of D.classes) { c.byVal = new Map(c.events.map(([v, n]) => [v, n])); classByVal.set(c.value, c); }
+  }
+  /** TRACE_SYS_RELEASE の値(例: "8.0.0")→ 定義のある版(例: "8.0")。無ければ null */
+  function versionKey(release) {
+    const r = (release ?? "").trim();
+    return VERSIONS.find((k) => r === k || r.startsWith(k + ".")) ?? null;
+  }
+  /** ヘッダの版を選ぶ。選んだ版を返す */
+  function useFor(header) { const k = versionKey(headerValue(header, H.release)) ?? LATEST; use(k); return k; }
+  use(LATEST);
 
   // ---- ヘッダ語のフィールド
   function getF(h, f) { return (h >>> L[f].shift) & L[f].mask; }
@@ -259,9 +265,6 @@ function makeCore(D) {
   function rest(h) { return u32(h & REST_MASK); }
 
   // ---- 名前
-  const structByVal = new Map(D.structs.map(([v, n]) => [v, n]));
-  const classByVal = new Map();
-  for (const c of D.classes) { c.byVal = new Map(c.events.map(([v, n]) => [v, n])); classByVal.set(c.value, c); }
   function structName(v) { return structByVal.get(v) ?? null; }
   function className(v) { const c = classByVal.get(v); return c ? c.name : null; }
   function eventName(cv, ev) {
@@ -345,7 +348,9 @@ function makeCore(D) {
   // 意味(エンディアン、SYSPAGE_LEN など)は、つないだ文字列を kev と同じ規則で読み直して決める。
   function newSlot(fresh = false) { return { on: !fresh, fresh, h: 0, stamp: 0, d1: 0, d2: 0 }; }
   function newHeaderRow() { return { on: true, key: "", value: "" }; } // 空の行は何も出さない
-  function newDoc() {
+  /** 新しい文書(版の既定のヘッダ)。その版を選ぶ */
+  function newDoc(key = LATEST) {
+    use(key);
     return {
       header: D.new_header.map(([key, value]) => ({ on: true, key: key + H.postfix, value })),
       syspage: [],
@@ -428,6 +433,7 @@ function makeCore(D) {
       const o = base + i * SB;
       slots[i] = { on: true, fresh: false, h: dv.getUint32(o, le), stamp: dv.getUint32(o + 4, le), d1: dv.getUint32(o + 8, le), d2: dv.getUint32(o + 12, le) };
     }
+    useFor(header);
     return { header, syspage, slots, notes };
   }
 
@@ -475,6 +481,11 @@ function makeCore(D) {
     const actual = doc.syspage.filter((x) => x.on).reduce((a, x) => a + x.bytes.length, 0);
     if (Number.isNaN(sp)) out.push(["warn", `${H.syspage_len} が数値ではありません`]);
     else if (sp !== actual) out.push(["warn", `${H.syspage_len} は ${sp} ですが、出力する syspage は ${actual} バイトです`]);
+    const rel = headerValue(doc.header, H.release);
+    if (versionKey(rel) === null) {
+      const what = rel === null ? `${H.release} がありません` : `${H.release} の ${rel.trim()} は定義の無い版です`;
+      out.push(["warn", `${what}(名前は QNX ${LATEST} の定義で付けます)`]);
+    }
     return out;
   }
 
@@ -506,6 +517,7 @@ function makeCore(D) {
 
   /** 文書 → CSV(新規作成でまだ触っていない行は書かない) */
   function toCsv(doc) {
+    useFor(doc.header);
     const le = littleEndian(doc.header);
     const L2 = [];
     const flag = (x) => (x.on ? C.on : C.off);
@@ -573,119 +585,13 @@ function makeCore(D) {
       const more = errs.length > 20 ? `\n…ほか ${errs.length - 20} 件` : "";
       throw new Error("CSV を読めませんでした\n" + errs.slice(0, 20).join("\n") + more);
     }
+    useFor(doc.header);
     return doc;
   }
 
-  // ---- トレースバッファ(TIME, BUFFER, イベント…, BUFFER_END)
-  const CT = D.control, CW = CT.words;
-  const isCtl = (s, e) => getF(s.h, "class") === CT.class && getF(s.h, "event") === e;
-  const isFrame = (s) => isCtl(s, CT.time) || isCtl(s, CT.buffer) || isCtl(s, CT.buffer_end);
-  const pv = (s, k) => (k === 0 ? s.d1 : s.d2); // payload の k 語目
-  const pw = (pairs) => { const w = [0, 0]; for (const [k, v] of pairs) w[k] = u32(v); return w; };
-  function ctlSlot(cpu, ev, stamp, w) {
-    let h = setF(0, "cpu", cpu);
-    h = setF(h, "class", CT.class);
-    h = setF(h, "event", ev);
-    return { on: true, fresh: false, h, stamp: u32(stamp), d1: w[0], d2: w[1] };
-  }
-
-  /** 有効なスロットをファイル順に見て、CPU ごとのトレースバッファと気づいた点を返す(行番号は 0 から) */
-  function analyzeBuffers(slots) {
-    const bufs = [], issues = [];
-    const st = new Map();
-    const get = (c) => {
-      if (!st.has(c)) st.set(c, { open: null, lastSeq: null, prev: -1, pendingTime: -1, outside: [] });
-      return st.get(c);
-    };
-    for (let i = 0; i < slots.length; i++) {
-      const s = slots[i];
-      if (!s.on) continue;
-      const cpu = getF(s.h, "cpu"), c = get(cpu);
-      for (const [oc, o] of st) {
-        if (oc !== cpu && o.open && !o.open.interleaved) {
-          o.open.interleaved = true;
-          o.open.issues.push(`途中に CPU ${cpu} のスロットがある(${i + 1} 行)`);
-        }
-      }
-      if (isCtl(s, CT.buffer)) {
-        if (c.open) { c.open.issues.push("BUFFER_END が無いまま次の BUFFER"); bufs.push(c.open); }
-        let first = i, actual = 1;
-        if (c.pendingTime >= 0) { first = c.pendingTime; actual = 2; c.outside.pop(); } // 直前の TIME から数える
-        const seq = pv(s, CW.buffer_sequence);
-        const b = { cpu, seq, declared: pv(s, CW.buffer_num_events), first, row: i, last: i, actual, closed: false, issues: [], interleaved: false };
-        if (c.lastSeq !== null && seq !== u32(c.lastSeq + 1)) b.issues.push(`通番が ${c.lastSeq} の次に ${seq}`);
-        c.lastSeq = seq;
-        c.open = b;
-      } else if (c.open) {
-        c.open.actual++;
-        c.open.last = i;
-        if (isCtl(s, CT.buffer_end)) {
-          if (s.d1 !== D.cookie || s.d2 !== D.cookie) c.open.issues.push(`BUFFER_END の cookie が ${hex8(D.cookie)} ではない`);
-          c.open.closed = true;
-          bufs.push(c.open);
-          c.open = null;
-        }
-      } else if (isCtl(s, CT.buffer_end)) {
-        issues.push([i, `CPU ${cpu}: BUFFER の無い BUFFER_END(${i + 1} 行)`]);
-      } else {
-        c.outside.push(i);
-      }
-      c.pendingTime = !c.open && isCtl(s, CT.time) ? i : -1;
-      c.prev = i;
-    }
-    for (const [cpu, c] of st) {
-      if (c.open) { c.open.issues.push("BUFFER_END が無いまま終わる"); bufs.push(c.open); }
-      if (c.outside.length) issues.push([c.outside[0], `CPU ${cpu}: トレースバッファの外のスロットが ${c.outside.length} 個(最初は ${c.outside[0] + 1} 行)`]);
-    }
-    for (const b of bufs) {
-      if (b.closed && b.declared !== b.actual) b.issues.push(`スロット数が BUFFER では ${b.declared}、実際は ${b.actual}`);
-      if (b.actual > CONF.bufferSlots) b.issues.push(`上限 ${CONF.bufferSlots} スロットを超えている`);
-    }
-    bufs.sort((a, b) => a.first - b.first);
-    return { bufs, issues };
-  }
-
-  /** BUFFER_END で閉じたトレースバッファの BUFFER のスロット数を、実際の数に直す。直した数を返す */
-  function fixBufferCounts(slots) {
-    let n = 0;
-    for (const b of analyzeBuffers(slots).bufs) {
-      if (!b.closed || b.declared === b.actual) continue;
-      const s = slots[b.row];
-      if (CW.buffer_num_events === 0) s.d1 = b.actual; else s.d2 = b.actual;
-      n++;
-    }
-    return n;
-  }
-
-  /**
-   * スロットの末尾(新規の空行より前)に TIME・BUFFER・BUFFER_END の 3 行を足す。
-   * CPU と stamp は直前の有効なスロットから(無ければ 0)。通番はその CPU の最後の BUFFER の次、
-   * TIME の上位 32bit はその CPU の最後の TIME から。BUFFER のスロット数は 3(枠だけ)。
-   * 足した位置(0 から)・CPU・通番を返す
-   */
-  function addBuffer(slots) {
-    let at = slots.length;
-    while (at > 0 && slots[at - 1].fresh) at--;
-    let last = null;
-    for (let i = at - 1; i >= 0 && !last; i--) if (slots[i].on) last = slots[i];
-    const cpu = last ? getF(last.h, "cpu") : 0, stamp = last ? last.stamp : 0;
-    let seq = CONF.bufferSeqStart, msb = 0;
-    for (let i = 0; i < at; i++) {
-      const s = slots[i];
-      if (!s.on || getF(s.h, "cpu") !== cpu) continue;
-      if (isCtl(s, CT.buffer)) seq = u32(pv(s, CW.buffer_sequence) + 1);
-      if (isCtl(s, CT.time)) msb = pv(s, CW.time_msb);
-    }
-    slots.splice(at, 0,
-      ctlSlot(cpu, CT.time, stamp, pw([[CW.time_msb, msb], [CW.time_lsb, stamp]])),
-      ctlSlot(cpu, CT.buffer, stamp, pw([[CW.buffer_sequence, seq], [CW.buffer_num_events, 3]])),
-      ctlSlot(cpu, CT.buffer_end, stamp, [D.cookie, D.cookie]));
-    return { at, cpu, seq };
-  }
-
   return {
-    analyzeBuffers, fixBufferCounts, addBuffer, isFrame,
-    D, L, getF, setF, rest, structName, className, eventName, classByVal,
+    get D() { return D; }, VERSIONS, LATEST, versionKey, useFor, use,
+    getF, setF, rest, structName, className, eventName, classOf: (v) => classByVal.get(v) ?? null,
     parseU32, parseField, hex8, hex2, wordsToStr, wordToStr, strToWords, strToBytes, bytesToWords,
     newSlot, newDoc, newHeaderRow, headerText, littleEndian, parseKev, buildKev, check, toCsv, fromCsv,
   };
@@ -701,20 +607,13 @@ let doc = K.newDoc();
 let page = 0;
 let loadNotes = [];
 let lastErr = null;
-let opNote = null; // 直前の補助操作の結果
 
 // ---- メッセージと集計
 function renderMsgs() {
-  const ana = K.analyzeBuffers(doc.slots);
-  const nIss = ana.issues.length + ana.bufs.filter((b) => b.issues.length).length;
-  const items = [
-    ...(lastErr ? [["err", lastErr]] : []), ...loadNotes, ...(opNote ? [opNote] : []), ...K.check(doc),
-    ...(nIss ? [["warn", `トレースバッファの注意が ${nIss} 件あります(「トレースバッファ」を参照)`]] : []),
-  ];
-  renderBuffers(ana);
+  const items = [...(lastErr ? [["err", lastErr]] : []), ...loadNotes, ...K.check(doc)];
   $("msgs").innerHTML = items.map(([k, m]) => `<div class="${k}">${esc(m).replace(/\n/g, "<br>")}</div>`).join("");
   const on = doc.slots.filter((s) => s.on).length;
-  $("summary").textContent = `スロット ${doc.slots.length} 行(出力 ${on})・${K.littleEndian(doc.header) ? "リトル" : "ビッグ"}エンディアン・定義 QNX ${K.D.release}`;
+  $("summary").textContent = `スロット ${doc.slots.length} 行(出力 ${on})・${K.littleEndian(doc.header) ? "リトル" : "ビッグ"}エンディアン・名前は QNX ${K.D.release} の定義`;
 }
 function setErr(m) { lastErr = m; renderMsgs(); }
 
@@ -724,7 +623,7 @@ function renderHeader() {
     <tr data-i="${i}" class="${x.on ? "" : "off"}">
       <td class="n">${i + 1}</td>
       <td><input type="checkbox" data-f="on" ${x.on ? "checked" : ""}></td>
-      <td><input data-f="key" class="w20 mono" value="${esc(x.key)}" placeholder="${K.D.header.prefix}XXX${K.D.header.postfix}"></td>
+      <td><input data-f="key" class="w20 mono" value="${esc(x.key)}" placeholder="${CONF.header.prefix}XXX${CONF.header.postfix}"></td>
       <td><input data-f="value" class="w40 mono" value="${esc(x.value)}"></td>
       <td class="ops"><button data-op="up" title="上へ">↑</button><button data-op="down" title="下へ">↓</button><button data-op="ins" title="下に挿入">＋</button><button data-op="del" title="削除">✕</button></td>
     </tr>`).join("");
@@ -734,6 +633,7 @@ $("hdr").addEventListener("change", (e) => {
   const t = e.target, tr = t.closest("tr"); if (!tr) return;
   const x = doc.header[+tr.dataset.i];
   if (t.dataset.f === "on") x.on = t.checked; else x[t.dataset.f] = t.value;
+  K.useFor(doc.header); // TRACE_SYS_RELEASE が変われば名前の定義も変わる
   lastErr = null; renderHeader(); renderSlots(); renderSys(); renderMsgs();
 });
 $("hdr").addEventListener("click", (e) => {
@@ -743,10 +643,11 @@ $("hdr").addEventListener("click", (e) => {
   else if (op === "down" && i + 1 < H.length) [H[i + 1], H[i]] = [H[i], H[i + 1]];
   else if (op === "ins") H.splice(i + 1, 0, K.newHeaderRow());
   else if (op === "del") H.splice(i, 1);
+  K.useFor(doc.header);
   renderHeader(); renderSlots(); renderSys(); renderMsgs();
 });
 $("bHdrAdd").onclick = () => {
-  const H = doc.header, endAt = H.findIndex((x) => x.key === K.D.header.end + K.D.header.postfix);
+  const H = doc.header, endAt = H.findIndex((x) => x.key === CONF.header.end + CONF.header.postfix);
   H.splice(endAt < 0 ? H.length : endAt, 0, K.newHeaderRow());
   renderHeader(); renderMsgs();
 };
@@ -770,7 +671,7 @@ const classOpts = (v) => {
   return s + K.D.classes.map((c) => `<option value="${c.value}" ${c.value === v ? "selected" : ""}>${c.name}</option>`).join("");
 };
 function eventOpts(cv, ev) {
-  const c = K.classByVal.get(cv);
+  const c = K.classOf(cv);
   const list = c ? c.events : [];
   const known = list.some(([v]) => v === ev);
   let s = known ? "" : `<option value="${ev}" selected>${esc(K.eventName(cv, ev) ?? "?")} (${ev})</option>`;
@@ -866,7 +767,7 @@ tbody.addEventListener("change", (e) => {
       default: return;
     }
     if (s.fresh) { s.fresh = false; s.on = true; } // 新規の空行は、触ったら有効にする
-    lastErr = null; opNote = null;
+    lastErr = null;
     replaceRow(tr, i);
     renderMsgs();
   } catch (err) {
@@ -880,54 +781,12 @@ tbody.addEventListener("click", (e) => {
   if (op === "ins") doc.slots.splice(i + 1, 0, K.newSlot(true));
   else if (op === "dup") doc.slots.splice(i + 1, 0, { ...doc.slots[i], fresh: false });
   else if (op === "del") doc.slots.splice(i, 1);
-  opNote = null;
   renderSlots(); renderMsgs();
 });
 $("bAddRows").textContent = `${CONF.addRows} 行を追加`;
 $("bAddRows").onclick = () => {
   for (let i = 0; i < CONF.addRows; i++) doc.slots.push(K.newSlot(true));
   page = pages() - 1; renderSlots(); renderMsgs();
-};
-
-// ---- トレースバッファの補助
-function renderBuffers(ana) {
-  const bad = ana.bufs.filter((b) => b.issues.length);
-  const list = [...bad, ...ana.bufs.filter((b) => !b.issues.length)];
-  const shown = list.slice(0, CONF.maxBufferRows);
-  const cpus = [...new Set(ana.bufs.map((b) => b.cpu))].sort((a, b) => a - b);
-  let html = `<div class="muted">トレースバッファ ${ana.bufs.length} 個(CPU ${cpus.join(", ") || "なし"})・注意のあるトレースバッファ ${bad.length} 個。行を押すとそのスロットへ移動します</div>`;
-  html += ana.issues.map(([i, m]) => `<div class="warn jump" data-row="${i}" style="cursor:pointer">${esc(m)}</div>`).join("");
-  if (shown.length) {
-    html += `<div class="wrap"><table><thead><tr><th>CPU</th><th>通番</th><th>BUFFER のスロット数</th><th>実際</th><th>行</th><th>注意</th></tr></thead><tbody>`;
-    html += shown.map((b) => `<tr class="jump" data-row="${b.first}">
-      <td>${b.cpu}</td><td>${b.seq}</td><td>${b.declared}</td>
-      <td class="${b.closed && b.declared !== b.actual ? "bad" : ""}">${b.actual}</td>
-      <td>${b.first + 1}〜${b.last + 1}</td><td class="bad">${esc(b.issues.join("、"))}</td></tr>`).join("");
-    html += `</tbody></table></div>`;
-    if (list.length > shown.length) html += `<div class="muted">ほか ${list.length - shown.length} 個は省略</div>`;
-  }
-  $("bufInfo").innerHTML = html;
-}
-function jumpTo(i) {
-  page = Math.floor(i / CONF.pageSize);
-  renderSlots();
-  const tr = tbody.querySelector(`tr[data-i="${i}"]`);
-  if (tr) { tr.scrollIntoView({ block: "center" }); tr.classList.add("hit"); }
-}
-$("bufInfo").addEventListener("click", (e) => {
-  const el = e.target.closest("[data-row]");
-  if (el) jumpTo(+el.dataset.row);
-});
-$("bAddBuf").onclick = () => {
-  const r = K.addBuffer(doc.slots);
-  opNote = ["info", `CPU ${r.cpu} の通番 ${r.seq} のトレースバッファを ${r.at + 1}〜${r.at + 3} 行に追加しました。` +
-    "イベントは BUFFER と BUFFER_END の間に入れ(＋ボタンで挿入)、最後に「バッファ内スロット数修正」を押してください"];
-  lastErr = null; renderMsgs(); jumpTo(r.at);
-};
-$("bFix").onclick = () => {
-  const n = K.fixBufferCounts(doc.slots);
-  opNote = ["info", n ? `BUFFER のスロット数を ${n} 個直しました` : "直す BUFFER はありませんでした"];
-  lastErr = null; renderSlots(); renderMsgs();
 };
 
 // ---- 開く・保存
@@ -938,7 +797,7 @@ async function openFile(f) {
     doc = isCsv ? K.fromCsv(await f.text()) : K.parseKev(new Uint8Array(await f.arrayBuffer()));
     loadNotes = [["info", `${f.name} を読み込みました`], ...doc.notes];
     $("fname").value = f.name.replace(/\.(kev|csv)$/i, "");
-    page = 0; lastErr = null; opNote = null; renderAll();
+    page = 0; lastErr = null; renderAll();
   } catch (err) {
     setErr(`${f.name}: ${err.message}`);
   }
@@ -951,7 +810,8 @@ document.addEventListener("drop", (e) => {
   e.preventDefault(); document.body.classList.remove("drop");
   if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]);
 });
-$("bNew").onclick = () => { doc = K.newDoc(); loadNotes = []; lastErr = null; opNote = null; page = 0; $("fname").value = "edited"; renderAll(); };
+$("newVer").innerHTML = K.VERSIONS.map((k) => `<option value="${k}" ${k === K.LATEST ? "selected" : ""}>QNX ${k}</option>`).join("");
+$("bNew").onclick = () => { doc = K.newDoc($("newVer").value); loadNotes = []; lastErr = null; page = 0; $("fname").value = "edited"; renderAll(); };
 function download(data, name, type) {
   const url = URL.createObjectURL(new Blob([data], { type }));
   const a = document.createElement("a"); a.href = url; a.download = name; a.click();

@@ -4,7 +4,8 @@ QNX のカーネルトレース(kev ファイル)を、表計算ソフトやプ�
 `kevedit.html`(画面で編集)と `kevcsv.py`(コマンドで変換)は、どちらもこの書式で読み書きする。
 
 この文書は、CSV を自動で作る人やプログラム(AI を含む)が、これだけを読めば正しい kev を作れることを目標にしている。
-定義の値は QNX 8.0 のもの。
+CSV の書式は QNX の版に共通。§6 以降の値(ビット配置・クラスとイベントの番号・トレースバッファの枠)は QNX 8.0 のもの。
+kevedit.html と kevcsv.py は、ヘッダの `TRACE_SYS_RELEASE` の版の定義で名前を付ける(定義の無い版は最新の版)。
 
 ---
 
@@ -297,17 +298,7 @@ CPU n のときは、header の CPU 欄(ビット 24〜29)を n にする(CPU 1 
 - **出力の順**: CPU の異なるトレースバッファは、どの順に並べてもよい(実際のファイルでは、満杯になった順)。
 - **枠の外**: トレースバッファの外(BUFFER より前、BUFFER_END の後)にイベントを置くこともできるが、通常のファイルには無い形。
 
-### 点検
-
-`kevcsv.py check` と `kevedit.html` の「トレースバッファ」欄は、次の点を注意として示す(kev はそのまま書ける)。
-
-- スロット数の食い違い
-- 通番の飛び
-- BUFFER_END が無い、または BUFFER の無い BUFFER_END
-- cookie が `0xe6e6e6e6` ではない
-- トレースバッファの途中に別の CPU のスロットがある
-- トレースバッファの外のスロット
-- 上限(1011)を超えている
+道具はトレースバッファの枠を点検しない(版で違う可能性があるため)。枠が正しいかは、tracehub(診断の行)か traceprinter の出力で確かめる。
 
 ---
 
@@ -362,7 +353,8 @@ t:0x00001020 CPU:00 SYSTEM          :SLOG               opcode:3 severity:5 mess
 4. イベントの header を §6 の式で作る。クラスとイベント番号は §12 の表から選ぶ。
 5. stamp は、同じ CPU の中で増えていくように書く。組のスロットは同じ stamp にする。
 6. 各トレースバッファの BUFFER の payload1 に、スロット数(TIME から BUFFER_END まで)を書く。
-7. `python kevcsv.py csv2kev X.csv` で kev にし、`python kevcsv.py check X.kev` で注意が出ないことを確かめる。わざと崩す試験データなら、出る注意が狙いどおりかを確かめる。
+7. `python kevcsv.py csv2kev X.csv` で kev にし、`python kevcsv.py check X.kev` でヘッダの注意が出ないことを確かめる。
+8. `tracehub traceprinter X.kev OUT` か traceprinter で読み、トレースバッファの枠の診断の行が出ないことを確かめる。わざと崩す試験データなら、出る診断が狙いどおりかを確かめる。
 
 ---
 
@@ -480,7 +472,7 @@ t:0x00001020 CPU:00 SYSTEM          :SLOG               opcode:3 severity:5 mess
 
 | ファイル | 使い方 |
 |---|---|
-| `kevedit.html` | ブラウザで開く(ネット接続は不要)。kev / CSV を開いて 1 スロットずつ編集し、kev / CSV で保存する。「トレースバッファ追加」(末尾に TIME・BUFFER・BUFFER_END を足す)と「バッファ内スロット数修正」(BUFFER のスロット数を実際の数にする)がある |
+| `kevedit.html` | ブラウザで開く(ネット接続は不要)。kev / CSV を開いて 1 スロットずつ見る・直し、kev / CSV で保存する |
 | `kevcsv.py` | `python kevcsv.py kev2csv X.kev` / `csv2kev X.csv` / `check X.kev`(または `X.csv`)。標準ライブラリだけで動く |
 | `tests/test_kevedit.mjs` | `node tests/test_kevedit.mjs [kev のディレクトリ]`。kevedit.html と kevcsv.py の往復・一致の試験 |
 

@@ -1,16 +1,18 @@
 """確認用のイベント一覧を作る(セマンティック ID ごとの定義・表示・TableOfEvents・試験の結果)。
 
-    python tests/kev/tools/event_catalog.py [--table TableOfEvents.txt] [--kev-dir DIR ...] [--out DIR]
+    python tests/kev/tools/event_catalog.py [--qnx 800] [--table TableOfEvents.txt] [--kev-dir DIR ...] [--out DIR]
 
---table    QNX の TableOfEvents.txt。省略時は環境変数 TRACEHUB_TABLE_OF_EVENTS(無ければ TableOfEvents の列は空)
---kev-dir  実機の kev の置き場所(*.kev)。省略時は環境変数 TRACEHUB_KEV_DIR(; 区切り)
---out      出力先(省略時は target/event_catalog)
+--qnx      版(tests/kev/qnx<版>/ の <版>。例: 800)。省略時は最新の版
+--table    その版の TableOfEvents.txt。省略時は環境変数 TRACEHUB_TABLE_OF_EVENTS_<版>、無ければ TRACEHUB_TABLE_OF_EVENTS
+           (どちらも無ければ TableOfEvents の列は空)
+--kev-dir  実機の kev の置き場所(*.kev)。省略時は環境変数 TRACEHUB_KEV_DIR_<版>、無ければ TRACEHUB_KEV_DIR(; 区切り)
+--out      出力先(省略時は target/event_catalog/qnx<版>)
 
 出力(TableOfEvents の文を含むので、リポジトリに入れない):
   events.csv   セマンティック ID ごとに 1 行(Excel で開ける UTF-8)
   summary.md   件数のまとめ、TableOfEvents との違い、試験の結果
 
-traceprinter との比較の結果は、先に tests/kev/tools/compare.py を動かしておくと target/compare/result.json から読む。
+traceprinter との比較の結果は、先に tests/kev/tools/compare.py を動かしておくと target/compare/qnx<版>/result.json から読む。
 """
 
 from __future__ import annotations
@@ -26,6 +28,16 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+
+def versions() -> list[str]:
+    """試験のある版(tests/kev/qnx<版>/ のディレクトリ。例: "800")"""
+    return sorted((p.name[3:] for p in (ROOT / "tests" / "kev").glob("qnx*") if p.is_dir()), key=int)
+
+
+def env(name: str, qnx: str) -> str | None:
+    """版ごとの環境変数(例: TRACEHUB_TRACEPRINTER_800)、無ければ版の付かないもの"""
+    return os.environ.get(f"{name}_{qnx}") or os.environ.get(name)
+
 
 # TableOfEvents のクラス → クラス ID の定数名
 TOE_CLASS = {
@@ -144,14 +156,17 @@ def diff_labels(toe: list[str], ours: list[str]) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--table", type=Path, default=os.environ.get("TRACEHUB_TABLE_OF_EVENTS"))
+    ap.add_argument("--qnx", choices=versions(), default=versions()[-1])
+    ap.add_argument("--table", type=Path)
     ap.add_argument("--kev-dir", type=Path, action="append")
-    ap.add_argument("--out", type=Path, default=ROOT / "target" / "event_catalog")
+    ap.add_argument("--out", type=Path)
     a = ap.parse_args()
-    kev_dirs = a.kev_dir or [Path(p) for p in os.environ.get("TRACEHUB_KEV_DIR", "").split(";") if p]
+    table = a.table or (Path(t) if (t := env("TRACEHUB_TABLE_OF_EVENTS", a.qnx)) else None)
+    out_dir = a.out or ROOT / "target" / "event_catalog" / f"qnx{a.qnx}"
+    kev_dirs = a.kev_dir or [Path(p) for p in (env("TRACEHUB_KEV_DIR", a.qnx) or "").split(";") if p]
     real_kevs = [k for d in kev_dirs for k in sorted(d.glob("*.kev"))]
 
-    r = subprocess.run(["cargo", "run", "--release", "-q", "-p", "kevtool", "--", "catalog",
+    r = subprocess.run(["cargo", "run", "--release", "-q", "-p", "kevtool", "--", "--qnx", a.qnx, "catalog",
                         *map(str, real_kevs)], cwd=ROOT, capture_output=True)
     if r.returncode != 0:
         print(r.stderr.decode(errors="replace"), file=sys.stderr)
@@ -166,8 +181,8 @@ def main() -> int:
         events_by_class[row["class"]][norm(row["event"].split("::", 1)[1])] = row["event"]
     toe: dict[tuple[str, str], dict] = {}
     unmapped = []
-    if a.table:
-        for b in parse_table(a.table.read_text(encoding="utf-8", errors="replace")):
+    if table:
+        for b in parse_table(table.read_text(encoding="utf-8", errors="replace")):
             k = toe_key(b, events_by_class)
             if k is None:
                 unmapped.append(b)
@@ -175,7 +190,7 @@ def main() -> int:
                 toe[k] = b
 
     # traceprinter との比較の結果
-    result_path = ROOT / "target" / "compare" / "result.json"
+    result_path = ROOT / "target" / "compare" / f"qnx{a.qnx}" / "result.json"
     results = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else []
     by_kind = defaultdict(Counter)
     for x in results:
@@ -200,7 +215,7 @@ def main() -> int:
             "wide の書式": row["wide"],
             "出力の例(fast)": row["example_fast"],
             "出力の例(wide)": row["example_wide"],
-            "TableOfEvents": "あり" if b else ("" if not a.table else "なし"),
+            "TableOfEvents": "あり" if b else ("" if not table else "なし"),
             "TableOfEvents の Fast": b.get("Fast", ""),
             "TableOfEvents の Wide": wide_text(b),
             "引数名(fast)": diff_labels(toe_labels(b.get("Fast", "")), [x for x in row["fast_labels"].split(",") if x]) if b else "",
@@ -213,8 +228,8 @@ def main() -> int:
             "実機 kev の比較": ("一致" if real_ok else "未確認・不一致あり") if real_n else "",
         })
 
-    a.out.mkdir(parents=True, exist_ok=True)
-    with open(a.out / "events.csv", "w", encoding="utf-8-sig", newline="") as f:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "events.csv", "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(out_rows[0]))
         w.writeheader()
         w.writerows(out_rows)
@@ -235,7 +250,7 @@ def main() -> int:
              f"- traceprinter が行を出すもの: {sum(o['合成 kev で表示'] > 0 for o in out_rows)} 種類",
              f"- 合成 kev と traceprinter の比較: " + (f"{dict(by_kind['合成'])}" if results else "未実行(compare.py を先に動かす)"),
              f"- 実機 kev: {len(real_kevs)} 件。比較: " + (f"{dict(by_kind['実機'])}" if by_kind["実機"] else "未実行"),
-             f"- TableOfEvents: " + (f"{a.table.name}(ブロック {len(toe) + len(unmapped)}、対応の取れないもの {len(unmapped)})" if a.table else "指定なし"),
+             f"- TableOfEvents: " + (f"{table.name}(ブロック {len(toe) + len(unmapped)}、対応の取れないもの {len(unmapped)})" if table else "指定なし"),
              "", "| クラス | " + " | ".join(cols) + " |", "|---|" + "---|" * len(cols)]
     for cls, c in per.items():
         lines.append(f"| {cls} | " + " | ".join(str(c[x]) for x in cols) + " |")
@@ -246,14 +261,14 @@ def main() -> int:
     lines += ["", "列: 表示 = 合成 kev で traceprinter が行を出したもの、合成 = 合成 kev に含まれるもの、"
               "引数名の違い = TableOfEvents の引数名と tracehub のラベルが違うもの、実機 = 実機 kev に現れたもの。"]
     shown_no_toe = [o for o in out_rows if o["合成 kev で表示"] > 0 and o["TableOfEvents"] == "なし"]
-    if a.table:
+    if table:
         lines += ["", f"## 表示するが TableOfEvents に無いもの({len(shown_no_toe)})", ""]
         lines += [f"- {o['クラス']} {o['イベント']}({o['表示名']})" for o in shown_no_toe]
         lines += ["", f"## TableOfEvents にあるが対応の取れないもの({len(unmapped)})", ""]
         lines += [f"- {b['Class']} {b['Event']}" for b in unmapped]
-    (a.out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(a.out / "events.csv")
-    print(a.out / "summary.md")
+    (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(out_dir / "events.csv")
+    print(out_dir / "summary.md")
     return 0
 
 

@@ -1,10 +1,17 @@
 """QNX SDP のヘッダと TableOfEvents から、版ごとの def.rs(内部 ID の定義)を生成する。
 
-    python tests/kev/tools/gen_qnx_def.py --sdp <SDP の include ディレクトリ> --table <TableOfEvents.txt> [--out <def.rs>] [--check]
+    python tests/kev/tools/gen_qnx_def.py --sdp <SDP の include ディレクトリ> --table <TableOfEvents.txt> [--check]
+    python tests/kev/tools/gen_qnx_def.py --embed-only [--check]
 
---sdp     sys/trace.h・sys/kercalls.h・sys/states.h・sys/nto_version.h を含むディレクトリ
---out     省略時は crates/tracehub-kev/src/qnx<版>/def.rs(版は _NTO_VERSION から決める。800 → qnx800)
---check   書き込まずに、置いてあるファイルが生成結果と同じかを確かめる(違えば終了コード 1)
+--sdp         sys/trace.h・sys/kercalls.h・sys/states.h・sys/nto_version.h を含むディレクトリ
+--check       書き込まずに、置いてあるファイルが生成結果と同じかを確かめる(違えば終了コード 1)
+--embed-only  SDP を読まず、版ごとの kevedit の定義を kevedit.html・kevcsv.py に埋め込み直すだけ
+              (版のディレクトリ tests/kev/qnx<版>/ を消してサポートを切ったときなど)
+
+書くファイル(版は _NTO_VERSION から決める。800 → qnx800):
+  - crates/tracehub-kev/src/qnx<版>/def.rs
+  - tests/kev/qnx<版>/kevedit_defs.json(kevedit の定義: header のビット配置・構造・既定のヘッダ・名前の一覧)
+  - kevedit.html の <script id="defs"> と kevcsv.py の VERSIONS(すべての tests/kev/qnx*/kevedit_defs.json を埋め込む)
 
 def.rs に書くもの:
   - header のビット配置(フラグを含む)、構造の値
@@ -18,11 +25,23 @@ semantic_id.rs に無い名前があると def.rs がビルドできないので
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+KEV_TESTS = ROOT / "tests" / "kev"
+KEVEDIT = KEV_TESTS / "tools" / "kevedit"
+# 埋め込む場所: (ファイル, 前の印, 後ろの印)
+EMBED = [
+    (KEVEDIT / "kevedit.html", '<script id="defs" type="application/json">\n', "\n</script>"),
+    (KEVEDIT / "kevcsv.py", "VERSIONS = json.loads(r'''\n", "\n''')"),
+]
+# 新しく kev を作るときのヘッダの既定値(None は TRACE_SYS_RELEASE。kev の書式の値で、SDP のヘッダには無い)
+NEW_HEADER = [("TRACE_HEADER_BEGIN", ""), ("TRACE_VER_MAJOR", "2"), ("TRACE_VER_MINOR", "01"), ("TRACE_LITTLE_ENDIAN", "TRUE"),
+              ("TRACE_ENCODING", "16 byte events"), ("TRACE_CYCLES_PER_SEC", "19200000"), ("TRACE_CPU_NUM", "1"),
+              ("TRACE_SYS_RELEASE", None), ("TRACE_SYSPAGE_LEN", "0"), ("TRACE_HEADER_END", "")]
 HEADERS = ["sys/trace.h", "sys/kercalls.h", "sys/states.h", "sys/nto_version.h"]
 
 
@@ -144,19 +163,75 @@ def rows(name: str, items: list[tuple[int, str, str]], doc: str) -> str:
     return "\n".join(out)
 
 
+def dump_defs(d: dict) -> str:
+    """kevedit の定義の JSON(1 版)。名前の一覧は 6 個ずつ折り返す"""
+    out = ["{"]
+    out += [f" {json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}," for k, v in d.items() if k != "classes"]
+    out.append(' "classes": [')
+    for i, c in enumerate(d["classes"]):
+        head = json.dumps({k: v for k, v in c.items() if k != "events"}, ensure_ascii=False)[:-1]
+        ev = c["events"]
+        lines = [", ".join(json.dumps(e, ensure_ascii=False) for e in ev[j:j + 6]) for j in range(0, len(ev), 6)]
+        body = ("\n   " + ",\n   ".join(lines) + "\n  ") if lines else ""
+        out.append(f'  {head}, "events": [{body}]}}' + ("," if i + 1 < len(d["classes"]) else ""))
+    out += [" ]", "}"]
+    return "\n".join(out)
+
+
+def embedded_text() -> str:
+    """すべての版(tests/kev/qnx*/kevedit_defs.json)の kevedit の定義をまとめた JSON(版の順)"""
+    files = sorted(KEV_TESTS.glob("qnx*/kevedit_defs.json"), key=lambda p: int(p.parent.name[3:]))
+    parts = []
+    for f in files:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        parts.append(f' {json.dumps(d["release"])}: ' + dump_defs(d).replace("\n", "\n "))
+    return "{\n" + ",\n".join(parts) + "\n}"
+
+
+def embedded_files() -> list[tuple[Path, str]]:
+    """埋め込み先の (ファイル, 埋め込んだ後の内容)"""
+    text = embedded_text()
+    out = []
+    for path, begin, end in EMBED:
+        s = path.read_text(encoding="utf-8")
+        i = s.index(begin) + len(begin)
+        j = s.index(end, i)
+        out.append((path, s[:i] + text + s[j:]))
+    return out
+
+
+def write_or_check(files: list[tuple[Path, str]], check: bool) -> int:
+    bad = 0
+    for path, text in files:
+        same = path.exists() and path.read_text(encoding="utf-8") == text
+        if check:
+            if not same:
+                print(f"{path} が生成結果と違います", file=sys.stderr)
+                bad += 1
+        elif not same:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8", newline="\n")
+            print(path)
+    return 1 if bad else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sdp", required=True, type=Path)
-    ap.add_argument("--table", required=True, type=Path)
-    ap.add_argument("--out", type=Path)
+    ap.add_argument("--sdp", type=Path)
+    ap.add_argument("--table", type=Path)
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--embed-only", action="store_true")
     a = ap.parse_args()
+    if a.embed_only:
+        return write_or_check(embedded_files(), a.check)
+    if not a.sdp or not a.table:
+        ap.error("--sdp and --table are required (or use --embed-only)")
 
     H = Headers([(a.sdp / h).read_text(encoding="utf-8", errors="replace") for h in HEADERS])
     table = a.table.read_text(encoding="utf-8", errors="replace")
     ver = H.value("_NTO_VERSION")
     module = f"qnx{ver}"
-    out_path = a.out or ROOT / "crates" / "tracehub-kev" / "src" / module / "def.rs"
+    out_path = ROOT / "crates" / "tracehub-kev" / "src" / module / "def.rs"
 
     ev_mask, ev_shift = mask_shift(H.func["_NTO_TRACE_GETEVENT"])
     cl_mask, cl_shift = mask_shift(H.func["_NTO_TRACE_GETEVENT_C"])
@@ -276,15 +351,34 @@ def main() -> int:
         "",
     ]
     text = "\n".join(out)
-    if a.check:
-        if not out_path.exists() or out_path.read_text(encoding="utf-8") != text:
-            print(f"{out_path} が生成結果と違います", file=sys.stderr)
-            return 1
-        return 0
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(text, encoding="utf-8", newline="\n")
-    print(out_path)
-    return 0
+
+    # ---- kevedit の定義(表示名の一覧は kevedit が表示するだけ。KER_CALL は種別ごと、スレッドの状態は TH を付ける)
+    release = f"{ver // 100}.{ver % 100 // 10}"
+    kinds = ((0, "enter"), (max_kercall, "exit"), (max_kercall << 1, "int"))
+    events = {
+        "CONTROL": [[v, n] for n, v in control],
+        "KER_CALL": [[v | k, f"{n}:{s}"] for n, v in kercalls for k, s in kinds],
+        "INT": [[v, n] for n, v in ints],
+        "PR_TH": sorted([[v, "TH" + n] for n, v in states] + [[pr_th[n], n] for n in vt_names + proc_names]),
+        "SYSTEM": [[v, n] for n, v in system],
+        "COMM": [[v, n] for n, v in comm],
+        "SEC": [[v, n] for n, v in sec],
+        "QVM": [[v, n] for n, v in qvm],
+    }
+    defs = {
+        "release": release,
+        "layout": {"event": {"shift": ev_shift, "mask": ev_mask}, "class": {"shift": cl_shift, "mask": cl_mask},
+                   "flags": {"shift": fl_shift, "mask": fl_mask}, "cpu": {"shift": cpu_shift, "mask": cpu_mask},
+                   "struct": {"shift": st_shift, "mask": st_mask}},
+        "structs": [[v, n] for n, v in structs],
+        "new_header": [[k, f"{release}.{ver % 10}" if v is None else v] for k, v in NEW_HEADER],
+        "classes": [{"value": v, "name": n, "bit64": bit64 if n in ("KER_CALL", "SYSTEM") else 0, "events": events.get(n, [])}
+                    for n, v in classes],
+    }
+    generated = [(out_path, text), (KEV_TESTS / module / "kevedit_defs.json", dump_defs(defs) + "\n")]
+    rc = write_or_check(generated, a.check)
+    # 埋め込みは書いた後の kevedit_defs.json から作る(--check では今のファイルどうしで確かめる)
+    return rc | write_or_check(embedded_files(), a.check)
 
 
 if __name__ == "__main__":

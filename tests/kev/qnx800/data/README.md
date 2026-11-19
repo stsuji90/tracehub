@@ -1,7 +1,7 @@
-# 試験用の合成データ
+# 試験用の合成データ(QNX 8.0)
 
-kevcsv の CSV(書式は tests/kev/tools/kevedit/CSV_FORMAT.md)。`tests/kev/tools/compare.py` が kev にして、traceprinter の出力と比べる。
-大きな場面(全イベントの網羅など)はここに置かず、生成器(`cargo run -p kevtool -- scenarios <DIR>`)で作る。
+kevcsv の CSV(書式は tests/kev/tools/kevedit/CSV_FORMAT.md)。`tests/kev/tools/compare.py --qnx 800` が kev にして、traceprinter の出力と比べる。
+大きな場面(全イベントの網羅など)はここに置かず、生成器(`cargo run -p kevtool -- --qnx 800 scenarios <DIR>`)で作る。
 
 | ファイル | 内容 |
 |---|---|
