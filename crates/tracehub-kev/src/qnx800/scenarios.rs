@@ -13,7 +13,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use super::{args, class_code, def, event_code};
+use super::{args, def, internal_class, internal_ids};
+use crate::semantic_id::{ClassId, EventId, kercall, process, system, thread};
 use crate::tp_format::{Spec, Usage};
 
 /// 試験用の場面: (名前, CSV)
@@ -249,25 +250,17 @@ fn usages() -> (BTreeMap<(u8, u16), Usage>, BTreeMap<u8, Usage>) {
     let mut ev = BTreeMap::new();
     let mut wild = BTreeMap::new();
     for e in args::EVENTS {
-        let c = class_code(e.class).unwrap();
         let u = usage(e.fast, e.wide, e.min_words as usize);
-        if e.event == "*" {
-            wild.insert(c, u);
-        } else {
-            ev.insert((c, event_code(c, e.event, e.kind, e.is64).unwrap()), u);
+        match e.event {
+            Some(id) => {
+                ev.insert(internal_ids(e.class, id).unwrap(), u);
+            }
+            None => {
+                wild.insert(internal_class(e.class).unwrap(), u);
+            }
         }
     }
     (ev, wild)
-}
-
-fn thread_usage(code: u16) -> Usage {
-    let mut u = Usage::default();
-    let name = def::THREAD_STATES.iter().find(|r| r.0 == code).map(|r| r.1);
-    match args::THREAD_OVERRIDES.iter().find(|r| Some(r.0) == name) {
-        Some((_, items)) => u.add(items),
-        None => u.add(args::THREAD_BODY),
-    }
-    u
 }
 
 /// 全イベントの目録: (内部クラス, 内部イベント番号, payloads)
@@ -307,9 +300,12 @@ fn catalog() -> Vec<(u8, u16, Vec<u32>)> {
             }
         }
     }
-    // スレッドの状態(全番号)
+    // スレッドの状態の定義の無い番号
     for code in 0..def::PR_TH_PROCESS_BASE {
-        for w in variants(&thread_usage(code)) {
+        if ev.contains_key(&(def::CLASS_PR_TH, code)) {
+            continue;
+        }
+        for w in variants(&wild[&def::CLASS_PR_TH]) {
             out.push((def::CLASS_PR_TH, code, w));
         }
     }
@@ -384,9 +380,8 @@ fn catalog_events() -> Vec<SynEvent> {
     out
 }
 
-fn code(class: &str, event: &str) -> (u8, u16) {
-    let c = class_code(class).unwrap();
-    (c, event_code(c, event, "", false).unwrap())
+fn code(class: ClassId, event: EventId) -> (u8, u16) {
+    internal_ids(class, event).unwrap()
 }
 
 /// 語が足りないイベント: S(2 語)・CB だけ・CB CC で途切れた組
@@ -398,8 +393,8 @@ fn short_words() -> Vec<Slot> {
             *e = w;
         }
     }
-    let (ev, _) = usages();
-    let (pr_th, running) = code("PR_TH", "RUNNING");
+    let (ev, wild) = usages();
+    let (pr_th, running) = code(ClassId::THREAD, thread::RUNNING);
     let g = |v: &[u32], i: usize| v.get(i).copied().unwrap_or(0);
     // (構造, クラス, イベント番号, 時刻の増分, payloads)
     type Part = (u32, u8, u16, u64, [u32; 2]);
@@ -408,13 +403,10 @@ fn short_words() -> Vec<Slot> {
         if !super::DEFINED_CLASSES.contains(&c) {
             continue;
         }
-        let u = if c == def::CLASS_PR_TH && code < def::PR_TH_PROCESS_BASE {
-            thread_usage(code)
-        } else {
-            match ev.get(&(c, code)) {
-                Some(u) => u.clone(),
-                None => continue,
-            }
+        let u = match ev.get(&(c, code)) {
+            Some(u) => u.clone(),
+            None if c == def::CLASS_PR_TH && code < def::PR_TH_PROCESS_BASE => wild[&def::CLASS_PR_TH].clone(),
+            None => continue,
         };
         let req = if u.raw_str { usize::MAX } else { u.min_required };
         let run: Part = (def::STRUCT_S, pr_th, running, 0x10, [1, 1]);
@@ -458,10 +450,10 @@ fn short_words() -> Vec<Slot> {
 /// 組み立て中の組の後ろにたまる項目の数の境目(窓 - 1 / 窓。項目は S か組)と、
 /// 別の CPU の項目が merge の順で間に入る場合(2 CPU)
 fn combine_window() -> Vec<Slot> {
-    let (pr_th, name_t) = code("PR_TH", "NAME_T");
-    let (_, running) = code("PR_TH", "RUNNING");
+    let (pr_th, name_t) = code(ClassId::PROCESS, process::NAME_T);
+    let (_, running) = code(ClassId::THREAD, thread::RUNNING);
     let ker = def::CLASS_KER_CALL;
-    let sendv = event_code(ker, "MSG_SENDV", "ENTER", false).unwrap();
+    let sendv = code(ClassId::KER_CALL_ENTER, kercall::MSG_SENDV).1;
     let ab = u32::from_le_bytes(*b"ab\0\0");
     let win = args::COMBINE_WINDOW;
     let per = 1000usize; // 1 トレースバッファの本体のスロット数の上限
@@ -538,8 +530,8 @@ fn combine_window() -> Vec<Slot> {
 
 /// 多数のイベントの後の orphan(区切りごとに CC と CE)
 fn orphan_lookahead() -> Vec<Slot> {
-    let (pr_th, name_t) = code("PR_TH", "NAME_T");
-    let (_, running) = code("PR_TH", "RUNNING");
+    let (pr_th, name_t) = code(ClassId::PROCESS, process::NAME_T);
+    let (_, running) = code(ClassId::THREAD, thread::RUNNING);
     let mut out = Vec::new();
     let mut t: u64 = (1u64 << 32) | 0x100;
     let mut seq = 1;
@@ -1007,7 +999,7 @@ fn slog2_events() -> Vec<SynEvent> {
     raw(base[..8].to_vec());
     raw(base[..16].to_vec());
 
-    let (system, slog) = code("SYSTEM", "SLOG");
+    let (system, slog) = code(ClassId::SYSTEM, system::SLOG);
     let mut out: Vec<SynEvent> = recs
         .iter()
         .enumerate()
@@ -1032,10 +1024,10 @@ fn slog2_events() -> Vec<SynEvent> {
 
 /// 複数 CPU・下位 32 ビットの一周・CPU 間の同時刻を含む、スケジューリングのような列
 fn sched_events(cpus: u8, per_cpu: usize) -> Vec<SynEvent> {
-    let (pr_th, running) = code("PR_TH", "RUNNING");
-    let (_, ready) = code("PR_TH", "READY");
+    let (pr_th, running) = code(ClassId::THREAD, thread::RUNNING);
+    let (_, ready) = code(ClassId::THREAD, thread::READY);
     let ker = def::CLASS_KER_CALL;
-    let yield_num = event_code(ker, "SCHED_YIELD", "ENTER", false).unwrap();
+    let yield_num = code(ClassId::KER_CALL_ENTER, kercall::SCHED_YIELD).1;
     let mut out = Vec::new();
     let start: u64 = (7u64 << 32) | 0xFFF0_0000;
     let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -1148,7 +1140,7 @@ mod tests {
         }
         assert_eq!(status(def::CLASS_SEC, 0x3ff), (true, DisplayStatus::Display));
         assert_eq!(status(def::CLASS_PR_TH, 0x3f), (true, DisplayStatus::Unknown));
-        let (pr_th, running) = code("PR_TH", "RUNNING");
+        let (pr_th, running) = code(ClassId::THREAD, thread::RUNNING);
         assert_eq!(status(pr_th, running), (false, DisplayStatus::Display));
     }
 
@@ -1228,6 +1220,18 @@ mod coverage {
         add(ClassId::SEC, def::SEC_EVENTS);
         add(ClassId::QVM, def::QVM_EVENTS);
         s
+    }
+
+    /// args.rs の EVENTS は、セマンティック ID の全組み合わせを 1 行ずつ持つ(重複は spec の組み立てで panic)
+    #[test]
+    fn args_rows_cover_all_semantic_ids() {
+        let all = all_ids();
+        let rows: BTreeSet<_> = crate::qnx800::event_decoder::defined_ids().into_iter().collect();
+        let missing: Vec<_> = all.difference(&rows).collect();
+        let extra: Vec<_> = rows.difference(&all).collect();
+        assert!(missing.is_empty(), "args.rs に行が無い: {missing:?}");
+        assert!(extra.is_empty(), "def.rs に無い行: {extra:?}");
+        assert_eq!(args::EVENTS.iter().filter(|e| e.event.is_some()).count(), all.len());
     }
 
     /// 全イベント網羅の合成 kev(catalog)に、セマンティック ID の全組み合わせがある

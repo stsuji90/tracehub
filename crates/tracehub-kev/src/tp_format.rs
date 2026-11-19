@@ -28,6 +28,7 @@
 //! # 条件
 //! `words >= 4`、`u3 != 0xffffffff`、`u4 & 0x10000000`(0 でない)、`u2 & 0x1 == 0`、`A && B`。
 
+use crate::semantic_id::{ClassId, EventId};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
@@ -135,16 +136,14 @@ pub enum Spec {
 /// 値の名前の表(ビット名の並びは出力の順)
 pub type Table = &'static [(u64, &'static str)];
 
-/// イベント 1 種類の表示の定義。イベントは内部クラス名・内部イベント名(def.rs の名前)で指す。
-/// `event = "*"` はそのクラスで定義の無い番号すべて
+/// イベント 1 種類の表示の定義。イベントはセマンティック ID で指す。
+/// `event = None`(`any`)はそのクラスで定義の無い番号すべて(`max_code` があればその内部イベント番号まで)
 #[derive(Debug, Clone, Copy)]
 pub struct Ev {
-    pub class: &'static str,
-    pub event: &'static str,
-    /// KER_CALL の種別("ENTER" / "EXIT" / "INT")
-    pub kind: &'static str,
-    /// 64 ビット版
-    pub is64: bool,
+    pub class: ClassId,
+    pub event: Option<EventId>,
+    /// any の内部イベント番号の上限
+    pub max_code: Option<u16>,
     /// 表示名のテンプレート(None なら名前の規則で決める)
     pub name: Option<&'static str>,
     /// S(と CB だけで途切れた組)の書式
@@ -157,12 +156,11 @@ pub struct Ev {
     pub intcall: bool,
 }
 
-pub const fn ev(class: &'static str, event: &'static str) -> Ev {
+const fn ev_of(class: ClassId, event: Option<EventId>) -> Ev {
     Ev {
         class,
         event,
-        kind: "",
-        is64: false,
+        max_code: None,
         name: None,
         fast: Spec::None,
         wide: Spec::None,
@@ -171,12 +169,21 @@ pub const fn ev(class: &'static str, event: &'static str) -> Ev {
     }
 }
 
+pub const fn ev(class: ClassId, event: EventId) -> Ev {
+    ev_of(class, Some(event))
+}
+
+/// そのクラスで定義の無い番号
+pub const fn any(class: ClassId) -> Ev {
+    ev_of(class, None)
+}
+
 impl Ev {
-    pub const fn kind(self, kind: &'static str) -> Ev {
-        Ev { kind, ..self }
-    }
-    pub const fn is64(self) -> Ev {
-        Ev { is64: true, ..self }
+    pub const fn max_code(self, code: u16) -> Ev {
+        Ev {
+            max_code: Some(code),
+            ..self
+        }
     }
     pub const fn name(self, name: &'static str) -> Ev {
         Ev {

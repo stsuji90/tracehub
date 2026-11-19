@@ -1,9 +1,10 @@
 //! QNX 8.0 の traceprinter(1.02)の表示の定義。
 //!
 //! traceprinter の出力とバイト単位で同じにするための、表示名・引数の書式・出力しない条件。
-//! 手で保守する。イベントは def.rs の名前(内部クラス名・内部イベント名)で指す。
+//! 手で保守する。イベントはセマンティック ID で指す。EVENTS はセマンティック ID のすべてを 1 行ずつ持つ(試験で確かめる)。
 //! 書式の要素とテンプレートの書き方は crate::tp_format を参照。
 
+use crate::semantic_id::{ClassId, comm, control, int, kercall, process, qvm, sec, system, thread};
 use crate::tp_format::*;
 
 // ---------------------------------------------------------------- 出力の枠
@@ -64,62 +65,36 @@ pub const DIAG_CLASS_NAMES: &[(u8, &str)] = &[
 pub const DIAG_STRUCT_NAMES: &[(u32, &str)] = &[(0, "S"), (1, "CB"), (2, "CC"), (3, "CE")];
 
 // ---------------------------------------------------------------- 表示クラス名
-/// 内部クラス名 → 表示クラス名(KER_CALL と PR_TH は下)
-pub const CLASS_DISPLAY: &[(&str, &str)] = &[
-    ("CONTROL", "CONTROL"),
-    ("INT", "INTERRUPT"),
-    ("SYSTEM", "SYSTEM"),
-    ("USER", "USREVENT"),
-    ("COMM", "COMM"),
-    ("QUIP", "QUIP"),
-    ("SEC", "SEC"),
-    ("QVM", "QVM"),
+/// セマンティックなクラス ID → 表示クラス名
+pub const CLASS_DISPLAY: &[(ClassId, &str)] = &[
+    (ClassId::CONTROL, "CONTROL"),
+    (ClassId::KER_CALL_ENTER, "KER_CALL"),
+    (ClassId::KER_CALL_EXIT, "KER_EXIT"),
+    (ClassId::KER_CALL_INT, "KER_INT"),
+    (ClassId::INT, "INTERRUPT"),
+    (ClassId::THREAD, "THREAD"),
+    (ClassId::PROCESS, "PROCESS"),
+    (ClassId::SYSTEM, "SYSTEM"),
+    (ClassId::USER, "USREVENT"),
+    (ClassId::COMM, "COMM"),
+    (ClassId::QUIP, "QUIP"),
+    (ClassId::SEC, "SEC"),
+    (ClassId::QVM, "QVM"),
 ];
-pub const DISPLAY_KER_ENTER: &str = "KER_CALL";
-pub const DISPLAY_KER_EXIT: &str = "KER_EXIT";
-pub const DISPLAY_KER_INT: &str = "KER_INT";
+/// KER_CALL を INT_CALL の形(Ev::intcall)で表示するときの表示クラス名
 pub const DISPLAY_INT_CALL: &str = "INT_CALL";
-pub const DISPLAY_THREAD: &str = "THREAD";
-pub const DISPLAY_PROCESS: &str = "PROCESS";
 
 // ---------------------------------------------------------------- fast の書式が無いとき
 /// true: wide の書式で表示する、false: 表示しない
-pub const FAST_FALLBACK_WIDE: &[(&str, bool)] = &[("KER_CALL", false)];
+pub const FAST_FALLBACK_WIDE: &[(ClassId, bool)] = &[
+    (ClassId::KER_CALL_ENTER, false),
+    (ClassId::KER_CALL_EXIT, false),
+    (ClassId::KER_CALL_INT, false),
+];
 pub const FAST_FALLBACK_WIDE_DEFAULT: bool = true;
 
 // ---------------------------------------------------------------- 表示イベント名
-/// def.rs の名前と違う表示名(None = traceprinter が名前を持たない)
-pub const EVENT_NAMES: &[(&str, &str, Option<&str>)] = &[
-    ("PR_TH", "CREATE_P", Some("PROCCREATE")),
-    ("PR_TH", "DESTROY_P", Some("PROCDESTROY")),
-    ("PR_TH", "CREATE_P_NAME", Some("PROCCREATE_NAME")),
-    ("PR_TH", "DESTROY_P_NAME", Some("PROCDESTROY_NAME")),
-    ("PR_TH", "NAME_T", Some("PROCTHREAD_NAME")),
-    ("PR_TH", "CREATE_VT", Some("THCREATE_VT")),
-    ("PR_TH", "DESTROY_VT", Some("THDESTROY_VT")),
-    ("INT", "DELIVER", Some("INT_DELIVER")),
-    ("SYSTEM", "RESERVED", None),
-    ("SYSTEM", "PATHMGR", Some("PATHMGR_OPEN")),
-    ("SYSTEM", "APS_BUDGETS", Some("APS_NEW_BUDGET")),
-    ("SYSTEM", "APS_BNKR", Some("APS_BANKRUPTCY")),
-    ("COMM", "SMSG", Some("SND_MESSAGE")),
-    ("COMM", "SPULSE", Some("SND_PULSE")),
-    ("COMM", "RMSG", Some("REC_MESSAGE")),
-    ("COMM", "RPULSE", Some("REC_PULSE")),
-    ("COMM", "SPULSE_EXE", Some("SND_PULSE_EXE")),
-    ("COMM", "SPULSE_DIS", Some("SND_PULSE_DIS")),
-    ("COMM", "SPULSE_DEA", Some("SND_PULSE_DEA")),
-    ("COMM", "SPULSE_UN", Some("SND_PULSE_UN")),
-    ("COMM", "SPULSE_QUN", Some("SND_PULSE_QUN")),
-    ("COMM", "REPLY", Some("REPLY_MESSAGE")),
-    ("COMM", "ERROR", Some("MSG_ERROR")),
-    ("SEC", "QNET_CONNECT", None),
-    ("SEC", "OPEN_EVENT", None),
-    ("QVM", "RAISE_INTR", Some("INTR_RAISE")),
-    ("QVM", "LOWER_INTR", Some("INTR_LOWER")),
-];
-/// 64 ビット版の表示名(ここに無いものは 64 ビットでない版の名前)
-pub const EVENT_NAMES_64: &[(&str, &str, &str)] = &[("SYSTEM", "IPI", "IPI_64"), ("SYSTEM", "PROFILE", "PROFILE_64")];
+// EVENTS の name が無ければ、def.rs の名前(64 ビット版も 64 ビットでない版の名前)。KER_CALL とスレッドの状態は下の規則。
 
 // ---------------------------------------------------------------- カーネルコール
 pub const KERCALL_NAME: &str = "{call}/{num:02}";
@@ -127,85 +102,6 @@ pub const KERCALL_UNKNOWN_CALL: &str = "KER_{num:02}";
 /// INT_CALL の形(引数なし)
 pub const INTCALL_NAME: &str = "KER_{call}/{num}";
 pub const INTCALL_UNKNOWN_CALL: &str = "{num:02}";
-/// int の 64 ビットでない版を INT_CALL の形で表示するコール
-pub const INT_CALLS: &[&str] = &[
-    "NOP",
-    "TRACE_EVENT",
-    "RING0",
-    "CACHE_CONTROL",
-    "SYS_SRANDOM",
-    "MSG_REGISTER_EVENT",
-    "MSG_SEND_PULSEPTR",
-    "SYS_CPUPAGE_GET",
-    "SYS_CPUPAGE_SET",
-    "MSG_PAUSE",
-    "MSG_CURRENT",
-    "MSG_SENDV",
-    "MSG_SENDVNC",
-    "MSG_ERROR",
-    "MSG_RECEIVEV",
-    "MSG_REPLYV",
-    "MSG_READV",
-    "MSG_WRITEV",
-    "MSG_INFO",
-    "MSG_SEND_PULSE",
-    "MSG_DELIVER_EVENT",
-    "MSG_RECEIVEPULSEV",
-    "MSG_VERIFY_EVENT",
-    "SIGNAL_KILL",
-    "SIGNAL_RETURN",
-    "SIGNAL_ACTION",
-    "SIGNAL_PROCMASK",
-    "SIGNAL_SUSPEND",
-    "SIGNAL_WAITINFO",
-    "SIGNAL_KILL_SIGVAL",
-    "CHANNEL_CREATE",
-    "CHANNEL_DESTROY",
-    "CONNECT_ATTACH",
-    "CONNECT_DETACH",
-    "CONNECT_SERVER_INFO",
-    "CONNECT_CLIENT_INFO",
-    "CONNECT_FLAGS",
-    "CONNECT_DUPFD",
-    "THREAD_CREATE",
-    "THREAD_DESTROY",
-    "THREAD_DETACH",
-    "THREAD_JOIN",
-    "THREAD_CANCEL",
-    "THREAD_CTL",
-    "THREAD_CTLEXT",
-    "INTERRUPT_ATTACH",
-    "INTERRUPT_DETACH",
-    "INTERRUPT_WAIT",
-    "INTERRUPT_MASK",
-    "INTERRUPT_UNMASK",
-    "CLOCK_TIME",
-    "CLOCK_ADJUST",
-    "CLOCK_PERIOD",
-    "CLOCK_ID",
-    "TIMER_CREATE",
-    "TIMER_DESTROY",
-    "TIMER_SETTIME",
-    "TIMER_INFO",
-    "TIMER_ALARM",
-    "TIMER_TIMEOUT",
-    "SYNC_CREATE",
-    "SYNC_DESTROY",
-    "SYNC_MUTEX_LOCK",
-    "SYNC_MUTEX_UNLOCK",
-    "SYNC_CONDVAR_WAIT",
-    "SYNC_CONDVAR_SIGNAL",
-    "SYNC_SEM_POST",
-    "SYNC_SEM_WAIT",
-    "SYNC_CTL",
-    "SCHED_GET",
-    "SCHED_SET",
-    "SCHED_YIELD",
-    "SCHED_INFO",
-    "SCHED_CTL",
-    "SYNC_TYPE_DESTROY",
-    "BAD",
-];
 /// 失敗した exit(表示する exit に限る)
 pub const KERCALL_FAILURE_WHEN: &str = "u0 == 0xffffffff && words >= 2";
 pub const KERCALL_FAILURE: &[Item] = &[t(" ret_val:-1, errno:{u1}")];
@@ -216,21 +112,13 @@ pub const KERCALL_NAMES_EXIT: &[(&str, &str)] = &[("SYNC_CONDVAR_SIGNAL", "SYNC_
 
 // ---------------------------------------------------------------- スレッドの状態(PR_TH の PR_TH_PROCESS_BASE より小さい番号)
 pub const THREAD_NAME: &str = "TH{name}";
-pub const THREAD_UNKNOWN_NAME: &str = "unknown";
-/// これより大きい状態の番号は出力しない
+/// 定義の無い状態の番号は、これ以下なら表示する(EVENTS の any(ClassId::THREAD))
 pub const THREAD_MAX_PRINTED: u16 = 29;
-/// traceprinter が名前を持たない状態
-pub const THREAD_HIDDEN: &[&str] = &["BARRIER", "PIPE"];
 pub const THREAD_BODY: &[Item] = &[
     t(" pid:{d0} tid:{d1} "),
     t("priority:{d2} policy:{d3}").when("words >= 4"),
     t(" partition:{d4}").when("words >= 5"),
     t(" sched_flags:0x{x5:08}").when("words >= 6"),
-];
-/// 状態ごとの書式(fast・wide 共通)
-pub const THREAD_OVERRIDES: &[(&str, &[Item])] = &[
-    ("CREATE", &[d("pid", 0), d("tid", 1), d("policy", 2)]),
-    ("DESTROY", &[d("pid", 0), d("tid", 1)]),
 ];
 
 // ---------------------------------------------------------------- 値の名前の表
@@ -347,8 +235,8 @@ pub const TABLES: &[(&str, Table)] = &[
 // レコード: [0..2] SLOG2_MAGIC、[2..4] レコード長、[7] 種別、[20..] 本文。
 // 種別が書式なら、本文は NUL で終わる printf の書式、その後ろに引数(2 バイト揃えの u16 のヘッダ + データ)が並ぶ。
 
-/// SLOG2 として読む (内部クラス名, 内部イベント名)
-pub const SLOG2_EVENT: (&str, &str) = ("SYSTEM", "SLOG");
+/// SLOG2 として読むイベント
+pub const SLOG2_EVENT: (ClassId, crate::semantic_id::EventId) = (ClassId::SYSTEM, system::SLOG);
 /// 表示イベント名
 pub const SLOG2_NAME: &str = "SLOG2";
 /// レコードの先頭(リトルエンディアンの u16)。違えば SLOG の書式
@@ -399,134 +287,38 @@ pub const SLOG2_WIDE_LENGTHS: &[&str] = &["l", "ll", "j", "z", "t"];
 pub const SLOG2_POINTER_DIGITS: usize = 16;
 
 // ---------------------------------------------------------------- 後ろに空行を入れるイベント
-pub const BLANK_AFTER: &[(&str, &str)] = &[("CONTROL", "BUFFER"), ("CONTROL", "BUFFER_END"), ("CONTROL", "DROPPED")];
+pub const BLANK_AFTER: &[(ClassId, crate::semantic_id::EventId)] = &[
+    (ClassId::CONTROL, control::BUFFER),
+    (ClassId::CONTROL, control::BUFFER_END),
+    (ClassId::CONTROL, control::DROPPED),
+];
 
 // ---------------------------------------------------------------- イベントごとの書式
-// kind: KER_CALL の種別、is64: 64 ビット版、args: fast と wide に同じ書式、*_silent: 出力しない。
-// コメントの Fast / Wide / Call は TableOfEvents の記述(参考)
+// セマンティック ID ごとに 1 行。args: fast と wide に同じ書式、fast / wide: それぞれの書式、*_silent: 出力しない、
+// 書式の無い行: traceprinter は出力しない(fast が無ければ wide を使うかは FAST_FALLBACK_WIDE)。
+// intcall: 引数の無い INT_CALL の形。any: そのクラスで定義の無い番号(max_code があればその番号まで)。
 
 pub const EVENTS: &[Ev] = &[
-    ev("CONTROL", "TIME").args(&[h("msb", 0), h("lsb(offset)", 1)]),
-    ev("CONTROL", "BUFFER").args(&[t(" sequence = {u0}, num_events = {u1}")]),
-    ev("CONTROL", "BUFFER_END").args(&[t(" cookie1 = {x0}, cookie2 = {x1}")]),
-    ev("CONTROL", "DROPPED").args(&[t(" dropped_events = {u0}")]),
-    ev("INT", "DELIVER").args(&[t("intr_id:0x{x0}({u0})")]),
-    ev("PR_TH", "CREATE_P").args(&[d("ppid", 0), d("pid", 1)]),
-    ev("PR_TH", "DESTROY_P").args(&[d("ppid", 0), d("pid", 1)]),
-    ev("PR_TH", "CREATE_P_NAME").args(&[d("ppid", 0), d("pid", 1), sz("name", 2)]),
-    ev("PR_TH", "DESTROY_P_NAME").args(&[d("ppid", 0), d("pid", 1), sz("name", 2)]),
-    ev("PR_TH", "NAME_T").args(&[d("pid", 0), d("tid", 1), sz("name", 2)]),
-    ev("COMM", "SMSG").args(&[h("rcvid", 0), d("pid", 1)]),
-    ev("COMM", "RMSG").args(&[h("rcvid", 0), d("pid", 1)]),
-    ev("COMM", "SPULSE").args(&[h("scoid", 0), d("pid", 1)]),
-    ev("COMM", "RPULSE").args(&[h("scoid", 0), d("pid", 1)]),
-    ev("COMM", "SPULSE_EXE").args(&[h("scoid", 0), d("pid", 1)]),
-    ev("COMM", "SPULSE_DIS").args(&[h("scoid", 0), d("pid", 1)]),
-    ev("COMM", "SPULSE_DEA").args(&[h("scoid", 0), d("pid", 1)]),
-    ev("COMM", "SPULSE_UN").args(&[h("scoid", 0), d("pid", 1)]),
-    ev("COMM", "SPULSE_QUN").args(&[h("scoid", 0), d("pid", 1)]),
-    ev("COMM", "SIGNAL").args(&[
-        d("si_signo", 0),
-        d("si_code", 1),
-        d("si_errno", 2),
-        h("__pad[0]", 3),
-        h("__pad[1]", 4),
-        h("__pad[2]", 5),
-        h("__pad[3]", 6),
-        h("__pad[4]", 7),
-        h("__pad[5]", 8),
-    ]),
-    ev("COMM", "REPLY").args(&[d("tid", 0), d("pid", 1)]),
-    ev("COMM", "ERROR").args(&[d("tid", 0), d("pid", 1)]),
-    ev("USER", "*").name("EVENT:{code}").args(&[dump()]),
-    ev("QUIP", "*").name("EVENT:{code}").args(&[dump()]),
-    ev("SEC", "ABLE").args(&[
-        t(" pid:{d0} able:{u1} ({enum:sec_able:u1:UNKNOWN})"),
-        t(" start:0x{q4:016}").when("words >= 6"),
-        t(" end:0x{q6:016}").when("words >= 8"),
-        t(" ALLOW").when("words >= 4 && u2 & 0x1"),
-        t(" DENY").when("words >= 4 && u2 & 0x1 == 0"),
-        t(" as root").when("words >= 4 && u2 & 0x2"),
-        t(" as non-root").when("words >= 4 && u2 & 0x2 == 0"),
-        t(" TRUNC").when("words < 8"),
-    ]),
-    ev("SEC", "ABLE_LOOKUP").args(&[t(" name:{r1} able:{u0}")]),
-    ev("SEC", "PATH_ATTACH").args(&[
-        t(" pid:{d0} ptype:{u1}"),
-        t(" TRUNC").when("words < 4"),
-        t(" ctype:{d2} chid:{d3} status:{enum:sec_path_status:u4:UNKNOWN}").when("words >= 4"),
-        t(" TRUNC").when("words >= 4 && words < 6"),
-        t(" path:{r5}").when("words >= 6"),
-    ]),
-    ev("SEC", "PERM_LOOKUP").args(&[t(" pid:{d0} class:{r4} ({d2}) perm:{rnext} ({d3}) errno:{d1}")]),
-    ev("SEC", "PERM_TEST").args(&[
-        t(" pid:{d0} ptype:{u1} otype:{u2} class:{d3} perm:{d4} errno:{u5}").when("words >= 6"),
-        t(" pid:{d0} ptype:{u1} TRUNC").when("words < 6"),
-    ]),
-    ev("SEC", "UNREG_EVENT").args(&[
-        t(" src pid:{d0} dst:{r4} (pid:{d1} tid:{u2}) denied:{u3}").when("words >= 6"),
-        t(" TRUNC").when("words < 6"),
-    ]),
-    ev("SEC", "*").name("unknown({code})").args(&[]),
-    ev("SYSTEM", "IPI").args_silent(),
-    ev("SYSTEM", "IPI")
-        .is64()
-        .args(&[t(" ipicmd = {x0:#08}, "), flags(0, "ipi_cmd", " {name}")]),
-    ev("SYSTEM", "TIMER").args(&[
-        t(" pid:{d0} tid:{d1} timer_id:{d2} flags:0x{x3:08}"),
-        flags(3, "timer_flags", " {name}"),
-    ]),
-    ev("SYSTEM", "IST_ATTACH").min_words(6).args(&[
-        t("pid:{d0} tid:{d1} intr_id:0x{x2}({u2})"),
-        t(" intr_cpu:{d3:02}").when("u3 != 0xffffffff"),
-        t(" flags:0x{x4:08}"),
-        t(" EVENT").when("u4 & 0x10000000"),
-        t(" ist_prio:{d5}"),
-    ]),
-    ev("SYSTEM", "IST_DETACH").min_words(6).args(&[
-        t("pid:{d0} tid:{d1} intr_id:0x{x2}({u2})"),
-        t(" intr_cpu:{d3:02}").when("u3 != 0xffffffff"),
-        t(" flags:0x{x4:08}"),
-        t(" EVENT").when("u4 & 0x10000000"),
-        t(" ist_prio:{d5}"),
-    ]),
-    ev("SYSTEM", "PATHMGR").wide(&[d("pid", 0), d("tid", 1), sz("path", 2)]),
-    ev("SYSTEM", "MAPNAME").wide(&[d("pid", 0), h("vaddr", 1), h("len", 2), sz("name", 3)]),
-    ev("SYSTEM", "MAPNAME_64").wide(&[d("pid", 0), q("vaddr", 1), e("len", 3), sz("name", 5)]),
-    ev("SYSTEM", "SLOG").wide(&[d("opcode", 0), d("severity", 1), sz("message", 2)]),
-    ev("SYSTEM", "PAGEWAIT").args(&[
-        t(" pid:{d0} tid:{d1} ip:0x{x2:08} vaddr:0x{x3:08} type:{x4:04} --- flags:0x{x5:08} offset:0x{q6:016}"),
-        t(" name:{z8:6}").when("words >= 9"),
-    ]),
-    ev("SYSTEM", "POWER").args(&[t(" bitset:0x{x0:08}\t actual frequency:{u1} cpu:{u0&0xffff}")]),
-    ev("SYSTEM", "PROFILE").args(&[t(" ip = 0x{x0:08}, tid = 0x{x1:08}, pid = 0x{x2:08}")]),
-    ev("SYSTEM", "PROFILE")
-        .is64()
-        .args(&[t(" ip = 0x{q0:016}, tid = 0x{x2:08}, pid = 0x{x3:08}")]),
-    // Fast: dummy, empty
-    // Wide: dummy, empty
-    ev("KER_CALL", "NOP")
-        .kind("ENTER")
+    // ---- CONTROL
+    ev(ClassId::CONTROL, control::TIME).args(&[h("msb", 0), h("lsb(offset)", 1)]),
+    ev(ClassId::CONTROL, control::BUFFER).args(&[t(" sequence = {u0}, num_events = {u1}")]),
+    ev(ClassId::CONTROL, control::BUFFER_END).args(&[t(" cookie1 = {x0}, cookie2 = {x1}")]),
+    ev(ClassId::CONTROL, control::DROPPED).args(&[t(" dropped_events = {u0}")]),
+    // ---- KER_CALL(コールごとに enter・exit・int、それぞれ 64 ビット版)
+    ev(ClassId::KER_CALL_ENTER, kercall::NOP)
         .fast(&[h("dummy", 0), h("empty", 1)])
         .wide(&[h("dummy", 0), h("empty", 1)]),
-    ev("KER_CALL", "NOP").kind("ENTER").is64().fast_silent().wide_silent(),
-    // Fast: empty, empty
-    // Wide: empty, empty
-    ev("KER_CALL", "NOP")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_ENTER, kercall::NOP_64).fast_silent().wide_silent(),
+    ev(ClassId::KER_CALL_EXIT, kercall::NOP)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "NOP").kind("EXIT").is64().fast_silent().wide_silent(),
-    // Fast: mode, class
-    // Wide: mode, class, event, data_1, data_2
-    // Call: TraceEvent
-    ev("KER_CALL", "TRACE_EVENT").kind("ENTER").fast_silent().wide_silent(),
-    // Fast: mode, class
-    // Wide: mode (64), class (64), event (64), data_1 (64), data_2 (64)
-    // Call: TraceEvent
-    ev("KER_CALL", "TRACE_EVENT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::NOP_64).fast_silent().wide_silent(),
+    ev(ClassId::KER_CALL_INT, kercall::NOP).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::NOP_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TRACE_EVENT)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_ENTER, kercall::TRACE_EVENT_64)
         .fast(&[q("cmd", 0)])
         .wide(&[
             q("cmd", 0),
@@ -535,331 +327,187 @@ pub const EVENTS: &[Ev] = &[
             q("param3", 6),
             q("param4", 8),
         ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: TraceEvent
-    ev("KER_CALL", "TRACE_EVENT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::TRACE_EVENT)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "TRACE_EVENT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TRACE_EVENT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: func_p, arg_p
-    // Wide: func_p, arg_p
-    // Call: __Ring0
-    ev("KER_CALL", "RING0")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::TRACE_EVENT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::TRACE_EVENT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::RING0)
         .fast(&[h("func_p", 0), h("arg_p", 1)])
         .wide(&[h("func_p", 0), h("arg_p", 1)]),
-    // Fast: func_p (64)
-    // Wide: func_p (64)
-    // Call: __Ring0
-    ev("KER_CALL", "RING0")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::RING0_64)
         .fast(&[q("func_p", 0)])
         .wide(&[q("func_p", 0)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: __Ring0
-    ev("KER_CALL", "RING0")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::RING0)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "RING0").kind("EXIT").is64().fast_silent().wide_silent(),
-    ev("KER_CALL", "CACHE_CONTROL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_EXIT, kercall::RING0_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: addr(64), len(64), flags
-    // Wide: addr(64), len(64), flags
-    ev("KER_CALL", "CACHE_CONTROL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_INT, kercall::RING0).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::RING0_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CACHE_CONTROL)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_ENTER, kercall::CACHE_CONTROL_64)
         .fast(&[q("addr", 0)])
         .wide(&[q("addr", 0), q("len", 2), h("flags", 4)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: CacheControl
-    ev("KER_CALL", "CACHE_CONTROL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CACHE_CONTROL)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "CACHE_CONTROL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CACHE_CONTROL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: N/A
-    // Wide: N/A
-    // Call: SysSrandom
-    ev("KER_CALL", "SYS_SRANDOM")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CACHE_CONTROL).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CACHE_CONTROL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYS_SRANDOM)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYS_SRANDOM")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYS_SRANDOM_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "SYS_SRANDOM")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYS_SRANDOM)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYS_SRANDOM")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYS_SRANDOM_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: empty, empty
-    // Wide: empty, empty
-    // Call: MsgRegisterEvent
-    ev("KER_CALL", "MSG_REGISTER_EVENT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYS_SRANDOM).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYS_SRANDOM_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_REGISTER_EVENT)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "MSG_REGISTER_EVENT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_REGISTER_EVENT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: empty, empty
-    // Wide: empty, empty
-    // Call: MsgRegisterEvent
-    ev("KER_CALL", "MSG_REGISTER_EVENT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_REGISTER_EVENT)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "MSG_REGISTER_EVENT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_REGISTER_EVENT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: coid, code
-    // Wide: coid, priority, code, value
-    // Call: MsgSendPulse
-    ev("KER_CALL", "MSG_SEND_PULSEPTR")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_REGISTER_EVENT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_REGISTER_EVENT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_SEND_PULSEPTR)
         .fast(&[h("coid", 0), h("code", 1)])
         .wide(&[h("coid", 0), d("priority", 1), h("code", 2), h("value", 3)]),
-    // Fast: coid, code
-    // Wide: coid, priority, code, value (64)
-    // Call: MsgSendPulse
-    ev("KER_CALL", "MSG_SEND_PULSEPTR")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_SEND_PULSEPTR_64)
         .fast(&[h("coid", 0), h("code", 1)])
         .wide(&[h("coid", 0), d("priority", 1), h("code", 2), q("value", 3)]),
-    // Fast: status, empty
-    // Wide: status, empty
-    // Call: MsgSendPulse
-    ev("KER_CALL", "MSG_SEND_PULSEPTR")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_SEND_PULSEPTR)
         .fast(&[d("status", 0), h("empty", 1)])
         .wide(&[d("status", 0), h("empty", 1)]),
-    ev("KER_CALL", "MSG_SEND_PULSEPTR")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_SEND_PULSEPTR_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: index, empty
-    // Wide: index, empty
-    ev("KER_CALL", "SYS_CPUPAGE_GET")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_SEND_PULSEPTR).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_SEND_PULSEPTR_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYS_CPUPAGE_GET)
         .fast(&[d("index", 0), h("empty", 1)])
         .wide(&[d("index", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYS_CPUPAGE_GET")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYS_CPUPAGE_GET_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    ev("KER_CALL", "SYS_CPUPAGE_GET")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYS_CPUPAGE_GET)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYS_CPUPAGE_GET")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYS_CPUPAGE_GET_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: index, value
-    // Wide: index, value
-    ev("KER_CALL", "SYS_CPUPAGE_SET")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYS_CPUPAGE_GET).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYS_CPUPAGE_GET_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYS_CPUPAGE_SET)
         .fast(&[d("index", 0), h("value", 1)])
         .wide(&[d("index", 0), h("value", 1)]),
-    ev("KER_CALL", "SYS_CPUPAGE_SET")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYS_CPUPAGE_SET_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    ev("KER_CALL", "SYS_CPUPAGE_SET")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYS_CPUPAGE_SET)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYS_CPUPAGE_SET")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYS_CPUPAGE_SET_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: rcvid, cookie
-    // Wide: rcvid, cookie
-    // Call: MsgPause
-    ev("KER_CALL", "MSG_PAUSE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYS_CPUPAGE_SET).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYS_CPUPAGE_SET_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_PAUSE)
         .fast(&[h("rcvid", 0), h("cookie", 1)])
         .wide(&[h("rcvid", 0), h("cookie", 1)]),
-    ev("KER_CALL", "MSG_PAUSE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_PAUSE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: empty, empty
-    // Wide: empty, empty
-    // Call: MsgPause
-    ev("KER_CALL", "MSG_PAUSE").kind("EXIT").intcall().fast(&[]),
-    ev("KER_CALL", "MSG_PAUSE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_PAUSE).intcall().fast(&[]),
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_PAUSE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: rcvid, empty
-    // Wide: rcvid, empty
-    // Call: MsgCurrent
-    ev("KER_CALL", "MSG_CURRENT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_PAUSE).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_PAUSE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_CURRENT)
         .fast(&[h("rcvid", 0), h("empty", 1)])
         .wide(&[h("rcvid", 0), h("empty", 1)]),
-    ev("KER_CALL", "MSG_CURRENT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_CURRENT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: empty, empty
-    // Wide: empty, empty
-    // Call: MsgCurrent
-    ev("KER_CALL", "MSG_CURRENT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_CURRENT)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "MSG_CURRENT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_CURRENT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: coid, msg[0]
-    // Wide: coid, sparts, rparts, msg[0], msg[1], msg[2]
-    // Call: MsgSend,MsgSendv,MsgSendvs
-    ev("KER_CALL", "MSG_SENDV")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_CURRENT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_CURRENT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_SENDV)
         .fast(&[h("coid", 0), s("msg[0]", 1, 1)])
         .wide(&[h("coid", 0), d("sparts", 1), d("rparts", 2), s("msg[0]", 3, 3)]),
-    // Fast: coid, msg[0]
-    // Wide: coid, sparts (64), rparts (64), msg[0], msg[1], msg[2]
-    // Call: MsgSend,MsgSendv,MsgSendvs
-    ev("KER_CALL", "MSG_SENDV")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_SENDV_64)
         .fast(&[h("coid", 0), s("msg[0]", 1, 1)])
         .wide(&[h("coid", 0), e("sparts", 1), e("rparts", 3), s("msg[0]", 5, 3)]),
-    // Fast: status, rmsg[0]
-    // Wide: status, rmsg[0], rmsg[1], rmsg[2]
-    // Call: MsgSend,MsgSendv,MsgSendvs
-    ev("KER_CALL", "MSG_SENDV")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_SENDV)
         .fast(&[d("status", 0), s("rmsg[0]", 1, 1)])
         .wide(&[d("status", 0), s("rmsg[0]", 1, 3)]),
-    // Fast: status (64)
-    // Wide: status (64), rmsg[0], rmsg[1], rmsg[2]
-    // Call: MsgSend,MsgSendv,MsgSendvs
-    ev("KER_CALL", "MSG_SENDV")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_SENDV_64)
         .fast(&[e("status", 0)])
         .wide(&[e("status", 0), s("rmsg[0]", 2, 3)]),
-    ev("KER_CALL", "MSG_SENDV").kind("INT").intcall(),
-    ev("KER_CALL", "MSG_SENDV").kind("INT").is64().wide_silent(),
-    // Fast: coid, msg[0]
-    // Wide: coid, sparts, rparts, msg[0], msg[1], msg[2]
-    // Call: MsgSendnc,MsgSendvnc,MsgSendvsnc
-    ev("KER_CALL", "MSG_SENDVNC")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_SENDV).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_SENDV_64).wide_silent(),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_SENDVNC)
         .fast(&[h("coid", 0), s("msg[0]", 1, 1)])
         .wide(&[h("coid", 0), d("sparts", 1), d("rparts", 2), s("msg[0]", 3, 3)]),
-    // Fast: coid, msg[0]
-    // Wide: coid, sparts (64), rparts (64), msg[0], msg[1], msg[2]
-    // Call: MsgSendnc,MsgSendvnc,MsgSendvsnc
-    ev("KER_CALL", "MSG_SENDVNC")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_SENDVNC_64)
         .fast(&[h("coid", 0), s("msg[0]", 1, 1)])
         .wide(&[h("coid", 0), e("sparts", 1), e("rparts", 3), s("msg[0]", 5, 3)]),
-    // Fast: ret_val, rmsg[0]
-    // Wide: ret_val, rmsg[0], rmsg[1], rmsg[2]
-    // Call: MsgSendnc,MsgSendvnc,MsgSendvsnc
-    ev("KER_CALL", "MSG_SENDVNC")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_SENDVNC)
         .fast(&[h("ret_val", 0), s("rmsg[0]", 1, 1)])
         .wide(&[h("ret_val", 0), s("rmsg[0]", 1, 3)]),
-    // Fast: ret_val (64)
-    // Wide: ret_val (64), rmsg[0], rmsg[1], rmsg[2]
-    // Call: MsgSendnc,MsgSendvnc,MsgSendvsnc
-    ev("KER_CALL", "MSG_SENDVNC")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_SENDVNC_64)
         .fast(&[q("ret_val", 0)])
         .wide(&[q("ret_val", 0), s("rmsg[0]", 2, 3)]),
-    // Fast: rcvid, err
-    // Wide: rcvid, err
-    // Call: MsgError
-    ev("KER_CALL", "MSG_ERROR")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_SENDVNC).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_SENDVNC_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_ERROR)
         .fast(&[h("rcvid", 0), d("err", 1)])
         .wide(&[h("rcvid", 0), d("err", 1)]),
-    ev("KER_CALL", "MSG_ERROR")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_ERROR_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: MsgError
-    ev("KER_CALL", "MSG_ERROR")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_ERROR)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "MSG_ERROR")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_ERROR_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: chid, rparts
-    // Wide: chid, rparts
-    // Call: MsgReceive,MsgReceivev
-    ev("KER_CALL", "MSG_RECEIVEV")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_ERROR).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_ERROR_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_RECEIVEV)
         .fast(&[h("chid", 0), d("rparts", 1)])
         .wide(&[h("chid", 0), d("rparts", 1)]),
-    // Fast: N/A
-    // Wide: chid, rparts (64)
-    // Call: MsgReceive,MsgReceivev
-    ev("KER_CALL", "MSG_RECEIVEV")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_RECEIVEV_64)
         .fast(&[])
         .wide(&[h("chid", 0), e("rparts", 1)]),
-    // Fast: rcvid, rmsg[0]
-    // Wide: rcvid, rmsg[0], rmsg[1], rmsg[2], empty, empty, info->pid, info->tid, info->chid, info->scoid, info->coid, info->msglen, info->srcmsglen, info->dstmsglen, info->priority, info->flags, info->reserved
-    // Call: MsgReceive,MsgReceivev
-    ev("KER_CALL", "MSG_RECEIVEV")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_RECEIVEV)
         .fast(&[h("rcvid", 0), s("rmsg[0]", 1, 1)])
         .wide(&[
             h("rcvid", 0),
@@ -878,12 +526,7 @@ pub const EVENTS: &[Ev] = &[
             d("info->flags", 15),
             d("info->reserved", 16),
         ]),
-    // Fast: rcvid, rmsg[0]
-    // Wide: rcvid, rmsg[0], rmsg[1], rmsg[2], empty, empty, info->pid, info->tid, info->chid, info->scoid, info->coid, info->msglen (64), info->srcmsglen (64), info->dstmsglen (64), info->priority, info->flags, info->reserved[0], info->reserved[1]
-    // Call: MsgReceive,MsgReceivev
-    ev("KER_CALL", "MSG_RECEIVEV")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_RECEIVEV_64)
         .fast(&[h("rcvid", 0), s("rmsg[0]", 1, 1)])
         .wide(&[
             h("rcvid", 0),
@@ -902,114 +545,60 @@ pub const EVENTS: &[Ev] = &[
             d("info->flags", 18),
             d("info->reserved", 19),
         ]),
-    // Fast: rcvid, status
-    // Wide: rcvid, sparts, status, smsg[0], smsg[1], smsg[2]
-    // Call: MsgReply,MsgReplyv
-    ev("KER_CALL", "MSG_REPLYV")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_RECEIVEV).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_RECEIVEV_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_REPLYV)
         .fast(&[h("rcvid", 0), h("status", 1)])
         .wide(&[h("rcvid", 0), d("sparts", 1), h("status", 2), s("smsg[0]", 3, 3)]),
-    // Fast: N/A
-    // Wide: rcvid, sparts (64), status (64), smsg[0], smsg[1], smsg[2]
-    // Call: MsgReply,MsgReplyv
-    ev("KER_CALL", "MSG_REPLYV").kind("ENTER").is64().fast(&[]).wide(&[
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_REPLYV_64).fast(&[]).wide(&[
         h("rcvid", 0),
         e("sparts", 1),
         q("status", 3),
         s("smsg[0]", 5, 3),
     ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: MsgReply,MsgReplyv
-    ev("KER_CALL", "MSG_REPLYV")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_REPLYV)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "MSG_REPLYV")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_REPLYV_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: rcvid, offset
-    // Wide: rcvid, rmsg_p, rparts, offset
-    // Call: MsgRead,MsgReadv
-    ev("KER_CALL", "MSG_READV")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_REPLYV).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_REPLYV_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_READV)
         .fast(&[h("rcvid", 0), h("offset", 1)])
         .wide(&[h("rcvid", 0), h("rmsg_p", 1), d("rparts", 2), h("offset", 3)]),
-    // Fast: rcvid, empty
-    // Wide: rcvid, rmsg_p (64), rparts (64), offset (64)
-    // Call: MsgRead,MsgReadv
-    ev("KER_CALL", "MSG_READV")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_READV_64)
         .fast(&[h("rcvid", 0)])
         .wide(&[h("rcvid", 0), q("rmsg_p", 1), e("rparts", 3), q("offset", 5)]),
-    // Fast: rbytes, rmsg[0]
-    // Wide: rbytes, rmsg[0], rmsg[1], rmsg[2]
-    // Call: MsgRead,MsgReadv
-    ev("KER_CALL", "MSG_READV")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_READV)
         .fast(&[d("rbytes", 0), s("rmsg[0]", 1, 1)])
         .wide(&[d("rbytes", 0), s("rmsg[0]", 1, 3)]),
-    // Fast: rbytes (64)
-    // Wide: rbytes (64), rmsg[0], rmsg[1], rmsg[2]
-    // Call: MsgRead,MsgReadv
-    ev("KER_CALL", "MSG_READV")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_READV_64)
         .fast(&[e("rbytes", 0)])
         .wide(&[e("rbytes", 0), s("rmsg[0]", 2, 3)]),
-    // Fast: rcvid, offset
-    // Wide: rcvid, sparts, offset, msg[0], msg[1], msg[2]
-    // Call: MsgWrite,MsgWritev
-    ev("KER_CALL", "MSG_WRITEV")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_READV).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_READV_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_WRITEV)
         .fast(&[h("rcvid", 0), h("offset", 1)])
         .wide(&[h("rcvid", 0), d("sparts", 1), h("offset", 2), s("msg[0]", 3, 3)]),
-    // Fast: rcvid, empty
-    // Wide: rcvid, sparts (64), offset (64), msg[0], msg[1], msg[2]
-    // Call: MsgWrite,MsgWritev
-    ev("KER_CALL", "MSG_WRITEV")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_WRITEV_64)
         .fast(&[h("rcvid", 0)])
         .wide(&[h("rcvid", 0), e("sparts", 1), q("offset", 3), s("msg[0]", 5, 3)]),
-    // Fast: wbytes, empty
-    // Wide: wbytes, empty
-    // Call: MsgWrite,MsgWritev
-    ev("KER_CALL", "MSG_WRITEV")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_WRITEV)
         .fast(&[d("wbytes", 0), h("empty", 1)])
         .wide(&[d("wbytes", 0), h("empty", 1)]),
-    // Fast: wbytes (64)
-    // Wide: wbytes (64)
-    // Call: MsgWrite,MsgWritev
-    ev("KER_CALL", "MSG_WRITEV")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_WRITEV_64)
         .fast(&[e("wbytes", 0)])
         .wide(&[e("wbytes", 0)]),
-    // Fast: rcvid, info_p
-    // Wide: rcvid, info_p
-    // Call: MsgInfo
-    ev("KER_CALL", "MSG_INFO")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_WRITEV).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_WRITEV_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_INFO)
         .fast(&[h("rcvid", 0), h("info_p", 1)])
         .wide(&[h("rcvid", 0), h("info_p", 1)]),
-    // Fast: rcvid, empty
-    // Wide: rcvid, empty
-    // Call: MsgInfo
-    ev("KER_CALL", "MSG_INFO")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_INFO_64)
         .fast(&[h("rcvid", 0), h("empty", 1)])
         .wide(&[h("rcvid", 0), h("empty", 1)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty, empty, info->pid, info->tid, info->chid, info->scoid, info->coid, info->msglen, info->srcmsglen, info->dstmsglen, info->priority, info->flags, info->reserved
-    // Call: MsgInfo
-    ev("KER_CALL", "MSG_INFO")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_INFO)
         .fast(&[h("ret_val", 0), d("info->nd", 1)])
         .wide(&[
             h("ret_val", 0),
@@ -1027,12 +616,7 @@ pub const EVENTS: &[Ev] = &[
             d("info->flags", 12),
             h("empty", 13),
         ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty, empty, info->pid, info->tid, info->chid, info->scoid, info->coid, info->msglen (64), info->srcmsglen (64), info->dstmsglen (64), info->priority, info->flags, info->reserved[0], info->reserved[1]
-    // Call: MsgInfo
-    ev("KER_CALL", "MSG_INFO")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_INFO_64)
         .fast(&[h("ret_val", 0), d("info->nd", 1)])
         .wide(&[
             h("ret_val", 0),
@@ -1050,43 +634,26 @@ pub const EVENTS: &[Ev] = &[
             d("info->flags", 15),
             h("empty", 16),
         ]),
-    // Fast: coid, code
-    // Wide: coid, priority, code, value
-    // Call: MsgSendPulse
-    ev("KER_CALL", "MSG_SEND_PULSE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_INFO).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_INFO_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_SEND_PULSE)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "MSG_SEND_PULSE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_SEND_PULSE_64)
         .fast(&[h("coid", 0), h("code", 1)])
         .wide(&[h("coid", 0), d("priority", 1), h("code", 2), h("value", 3)]),
-    // Fast: status, empty
-    // Wide: status, empty
-    // Call: MsgSendPulse
-    ev("KER_CALL", "MSG_SEND_PULSE")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_SEND_PULSE)
         .fast(&[d("status", 0), h("empty", 1)])
         .wide(&[d("status", 0), h("empty", 1)]),
-    ev("KER_CALL", "MSG_SEND_PULSE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_SEND_PULSE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: rcvid, event->sigev_notify
-    // Wide: rcvid, event->sigev_notify, event->sigev_notify_function_p, event->sigev_value, event->sigev_notify_attributes_p
-    // Call: MsgDeliverEvent
-    ev("KER_CALL", "MSG_DELIVER_EVENT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_SEND_PULSE).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_SEND_PULSE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_DELIVER_EVENT)
         .fast_silent()
         .wide_silent(),
-    // Fast: rcvid, event->sigev_notify
-    // Wide: rcvid, event->sigev_notify, pad, event->sigev_notify_function_p (64), event->sigev_value (64), event->sigev_notify_attributes_p (64)
-    // Call: MsgDeliverEvent
-    ev("KER_CALL", "MSG_DELIVER_EVENT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_DELIVER_EVENT_64)
         .fast(&[h("rcvid", 0), d("event->sigev_notify", 1)])
         .wide(&[
             h("rcvid", 0),
@@ -1096,32 +663,21 @@ pub const EVENTS: &[Ev] = &[
             q("event->sigev_value", 5),
             q("event->sigev_notify_attributes_p", 7),
         ]),
-    // Fast: ret_val, eventp
-    // Wide: ret_val, eventp
-    // Call: MsgDeliverEvent
-    ev("KER_CALL", "MSG_DELIVER_EVENT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_DELIVER_EVENT)
         .fast(&[h("ret_val", 0), h("event", 1)])
         .wide(&[h("ret_val", 0), h("event", 1)]),
-    // Fast: N/A
-    // Wide: ret_val, eventp (64)
-    // Call: MsgDeliverEvent
-    ev("KER_CALL", "MSG_DELIVER_EVENT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_DELIVER_EVENT_64)
         .fast(&[])
         .wide(&[h("ret_val", 0), q("event", 1)]),
-    ev("KER_CALL", "MSG_RECEIVEPULSEV")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_DELIVER_EVENT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_DELIVER_EVENT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_RECEIVEPULSEV)
         .fast(&[h("chid", 0), d("rparts", 1)])
         .wide(&[h("chid", 0), d("rparts", 1)]),
-    ev("KER_CALL", "MSG_RECEIVEPULSEV")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_RECEIVEPULSEV_64)
         .fast(&[])
         .wide(&[h("chid", 0), e("rparts", 1)]),
-    ev("KER_CALL", "MSG_RECEIVEPULSEV")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_RECEIVEPULSEV)
         .fast(&[h("rcvid", 0), s("rmsg[0]", 1, 1)])
         .wide(&[
             h("rcvid", 0),
@@ -1140,9 +696,7 @@ pub const EVENTS: &[Ev] = &[
             d("info->flags", 15),
             d("info->reserved", 16),
         ]),
-    ev("KER_CALL", "MSG_RECEIVEPULSEV")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_RECEIVEPULSEV_64)
         .fast(&[h("rcvid", 0), s("rmsg[0]", 1, 1)])
         .wide(&[
             h("rcvid", 0),
@@ -1161,16 +715,12 @@ pub const EVENTS: &[Ev] = &[
             d("info->flags", 18),
             d("info->reserved", 19),
         ]),
-    ev("KER_CALL", "MSG_VERIFY_EVENT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_RECEIVEPULSEV).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_RECEIVEPULSEV_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_VERIFY_EVENT)
         .fast_silent()
         .wide_silent(),
-    // Fast: rcvid, event->sigev_notify
-    // Wide: rcvid, event->sigev_notify, pad, event->sigev_notify_function_p (64), event->sigev_value (64), event->sigev_notify_attribute_p (64)
-    // Call: MsgVerifyEvent
-    ev("KER_CALL", "MSG_VERIFY_EVENT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_VERIFY_EVENT_64)
         .fast(&[h("rcvid", 0), d("event->sigev_notify", 1)])
         .wide(&[
             h("rcvid", 0),
@@ -1180,23 +730,15 @@ pub const EVENTS: &[Ev] = &[
             q("event->sigev_value", 5),
             q("event->sigev_notify_attributes_p", 7),
         ]),
-    ev("KER_CALL", "MSG_VERIFY_EVENT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_VERIFY_EVENT)
         .fast(&[d("status", 0), h("empty", 1)])
         .wide(&[d("status", 0), h("empty", 1)]),
-    // Fast: status, empty
-    // Wide: status, empty
-    // Call: MsgVerifyEvent
-    ev("KER_CALL", "MSG_VERIFY_EVENT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_VERIFY_EVENT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: pid, signo
-    // Wide: empty, pid, tid, signo, code, value
-    // Call: SignalKill
-    ev("KER_CALL", "SIGNAL_KILL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_VERIFY_EVENT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_VERIFY_EVENT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_KILL)
         .fast(&[d("pid", 0), d("signo", 1)])
         .wide(&[
             h("nd", 0),
@@ -1206,55 +748,32 @@ pub const EVENTS: &[Ev] = &[
             h("code", 4),
             h("value", 5),
         ]),
-    ev("KER_CALL", "SIGNAL_KILL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_KILL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SignalKill
-    ev("KER_CALL", "SIGNAL_KILL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_KILL)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SIGNAL_KILL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_KILL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: s_p, empty
-    // Wide: s_p, empty
-    // Call: SignalReturn
-    ev("KER_CALL", "SIGNAL_RETURN")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_KILL).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_KILL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_RETURN)
         .fast(&[h("s_p", 0), h("empty", 1)])
         .wide(&[h("s_p", 0), h("empty", 1)]),
-    // Fast: s_p (64)
-    // Wide: s_p (64)
-    // Call: SignalReturn
-    ev("KER_CALL", "SIGNAL_RETURN")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_RETURN_64)
         .fast(&[q("s_p", 0)])
         .wide(&[q("s_p", 0)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SignalReturn
-    ev("KER_CALL", "SIGNAL_RETURN")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_RETURN)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SIGNAL_RETURN")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_RETURN_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: signo, act->sa_handler_p
-    // Wide: pid, sigstub_p, signo, act->sa_handler_p, act->sa_flags, act->sa_mask.bits[0], act->sa_mask.bits[1]
-    // Call: SignalAction
-    ev("KER_CALL", "SIGNAL_ACTION")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_RETURN).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_RETURN_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_ACTION)
         .fast(&[d("signo", 0), h("act->sa_handler_p", 1)])
         .wide(&[
             d("pid", 0),
@@ -1265,12 +784,7 @@ pub const EVENTS: &[Ev] = &[
             h("act->sa_mask.bits[0]", 5),
             h("act->sa_mask.bits[1]", 6),
         ]),
-    // Fast: signo
-    // Wide: pid, sigstub_p (64), signo, act->sa_handler_p (64), act->sa_flags, act->sa_mask.bits[0], act->sa_mask.bits[1]
-    // Call: SignalAction
-    ev("KER_CALL", "SIGNAL_ACTION")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_ACTION_64)
         .fast(&[d("signo", 0)])
         .wide(&[
             d("pid", 0),
@@ -1281,11 +795,7 @@ pub const EVENTS: &[Ev] = &[
             h("act->sa_mask.bits[0]", 7),
             h("act->sa_mask.bits[1]", 8),
         ]),
-    // Fast: ret_val, act->sa_handler_p
-    // Wide: ret_val, act->sa_handler_p, act->sa_flags, act->sa_mask.bits[0], act->sa_mask.bits[1]
-    // Call: SignalAction
-    ev("KER_CALL", "SIGNAL_ACTION")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_ACTION)
         .fast(&[h("ret_val", 0), h("oact->sa_handler_p", 1)])
         .wide(&[
             h("ret_val", 0),
@@ -1294,12 +804,7 @@ pub const EVENTS: &[Ev] = &[
             h("oact->sa_mask.bits[0]", 3),
             h("oact->sa_mask.bits[1]", 4),
         ]),
-    // Fast: ret_val
-    // Wide: ret_val, act->sa_handler_p (64), act->sa_flags, act->sa_mask.bits[0], act->sa_mask.bits[1]
-    // Call: SignalAction
-    ev("KER_CALL", "SIGNAL_ACTION")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_ACTION_64)
         .fast(&[h("ret_val", 0)])
         .wide(&[
             h("ret_val", 0),
@@ -1308,11 +813,9 @@ pub const EVENTS: &[Ev] = &[
             h("oact->sa_mask.bits[0]", 4),
             h("oact->sa_mask.bits[1]", 5),
         ]),
-    // Fast: pid, tid
-    // Wide: pid, tid, how, sig_blocked->bits[0], sig_blocked->bits[1]
-    // Call: SignalProcmask
-    ev("KER_CALL", "SIGNAL_PROCMASK")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_ACTION).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_ACTION_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_PROCMASK)
         .fast(&[d("pid", 0), d("tid", 1)])
         .wide(&[
             d("pid", 0),
@@ -1321,71 +824,42 @@ pub const EVENTS: &[Ev] = &[
             h("sig_blocked->bits[0]", 3),
             h("sig_blocked->bits[1]", 4),
         ]),
-    ev("KER_CALL", "SIGNAL_PROCMASK")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_PROCMASK_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, sig_blocked->bits[0]
-    // Wide: ret_val, sig_blocked->bits[0], sig_blocked->bits[1]
-    // Call: SignalProcmask
-    ev("KER_CALL", "SIGNAL_PROCMASK")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_PROCMASK)
         .fast(&[d("ret_val", 0), h("old_sig_blocked->bits[0]", 1)])
         .wide(&[
             d("ret_val", 0),
             h("old_sig_blocked->bits[0]", 1),
             h("old_sig_blocked->bits[1]", 2),
         ]),
-    ev("KER_CALL", "SIGNAL_PROCMASK")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_PROCMASK_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sig_blocked->bits[0], sig_blocked->bits[1]
-    // Wide: sig_blocked->bits[0], sig_blocked->bits[1]
-    // Call: SignalSuspend
-    ev("KER_CALL", "SIGNAL_SUSPEND")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_PROCMASK).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_PROCMASK_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_SUSPEND)
         .fast(&[h("sig_blocked->bits[0]", 0), h("sig_blocked->bits[1]", 1)])
         .wide(&[h("sig_blocked->bits[0]", 0), h("sig_blocked->bits[1]", 1)]),
-    ev("KER_CALL", "SIGNAL_SUSPEND")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_SUSPEND_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, sig_blocked_p
-    // Wide: ret_val, sig_blocked_p
-    // Call: SignalSuspend
-    ev("KER_CALL", "SIGNAL_SUSPEND")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_SUSPEND)
         .fast(&[h("ret_val", 0), h("sig_blocked_p", 1)])
         .wide(&[h("ret_val", 0), h("sig_blocked_p", 1)]),
-    // Fast: N/A
-    // Wide: ret_val, sig_blocked_p (64)
-    // Call: SignalSuspend
-    ev("KER_CALL", "SIGNAL_SUSPEND")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_SUSPEND_64)
         .fast(&[])
         .wide(&[h("ret_val", 0), q("sig_blocked_p", 1)]),
-    // Fast: sig_wait->bits[0], sig_wait->bits[1]
-    // Wide: sig_wait->bits[0], sig_wait->bits[1]
-    // Call: SignalWaitinfo
-    ev("KER_CALL", "SIGNAL_WAITINFO")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_SUSPEND).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_SUSPEND_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_WAITINFO)
         .fast(&[h("sig_wait->bits[0]", 0), h("sig_wait->bits[1]", 1)])
         .wide(&[h("sig_wait->bits[0]", 0), h("sig_wait->bits[1]", 1)]),
-    ev("KER_CALL", "SIGNAL_WAITINFO")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_WAITINFO_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sig_num, si_code
-    // Wide: sig_num, si_signo, si_code, si_errno, p[0], p[1], p[2], p[3], p[4], p[5], p[6]
-    // Call: SignalWaitinfo
-    ev("KER_CALL", "SIGNAL_WAITINFO")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_WAITINFO)
         .fast(&[d("sig_num", 0), d("si_code", 1)])
         .wide(&[
             d("sig_num", 0),
@@ -1400,16 +874,12 @@ pub const EVENTS: &[Ev] = &[
             d("p[5]", 9),
             d("p[6]", 10),
         ]),
-    ev("KER_CALL", "SIGNAL_WAITINFO")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_WAITINFO_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: pid, signo
-    // Wide: empty, pid, tid, signo, code, value
-    // Call: SignalKill
-    ev("KER_CALL", "SIGNAL_KILL_SIGVAL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_WAITINFO).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_WAITINFO_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_KILL_SIGVAL)
         .fast(&[d("pid", 0), d("signo", 1)])
         .wide(&[
             h("nd", 0),
@@ -1419,12 +889,7 @@ pub const EVENTS: &[Ev] = &[
             h("code", 4),
             h("value", 5),
         ]),
-    // Fast: pid, signo
-    // Wide: empty, pid, tid, signo, code, value (64)
-    // Call: SignalKillSigval
-    ev("KER_CALL", "SIGNAL_KILL_SIGVAL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SIGNAL_KILL_SIGVAL_64)
         .fast(&[d("pid", 0), d("signo", 1)])
         .wide(&[
             h("nd", 0),
@@ -1434,155 +899,91 @@ pub const EVENTS: &[Ev] = &[
             h("code", 4),
             q("value", 5),
         ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SignalKillSigval
-    ev("KER_CALL", "SIGNAL_KILL_SIGVAL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_KILL_SIGVAL)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SIGNAL_KILL_SIGVAL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SIGNAL_KILL_SIGVAL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: flags, empty
-    // Wide: flags, empty
-    // Call: ChannelCreate
-    ev("KER_CALL", "CHANNEL_CREATE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_KILL_SIGVAL).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SIGNAL_KILL_SIGVAL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CHANNEL_CREATE)
         .fast(&[h("flags", 0), h("empty", 1)])
         .wide(&[h("flags", 0), h("empty", 1)]),
-    ev("KER_CALL", "CHANNEL_CREATE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CHANNEL_CREATE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: chid, empty
-    // Wide: chid, empty
-    // Call: ChannelCreate
-    ev("KER_CALL", "CHANNEL_CREATE")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CHANNEL_CREATE)
         .fast(&[h("chid", 0), h("empty", 1)])
         .wide(&[h("chid", 0), h("empty", 1)]),
-    ev("KER_CALL", "CHANNEL_CREATE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CHANNEL_CREATE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: chid, empty
-    // Wide: chid, empty
-    // Call: ChannelDestroy
-    ev("KER_CALL", "CHANNEL_DESTROY")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CHANNEL_CREATE).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CHANNEL_CREATE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CHANNEL_DESTROY)
         .fast(&[h("chid", 0), h("empty", 1)])
         .wide(&[h("chid", 0), h("empty", 1)]),
-    ev("KER_CALL", "CHANNEL_DESTROY")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CHANNEL_DESTROY_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ChannelDestroy
-    ev("KER_CALL", "CHANNEL_DESTROY")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CHANNEL_DESTROY)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "CHANNEL_DESTROY")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CHANNEL_DESTROY_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: chid, cmd
-    // Wide: chid, cmd
-    // Call: ChannelCtl
-    ev("KER_CALL", "CHANNEL_CTL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CHANNEL_DESTROY).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CHANNEL_DESTROY_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CHANNEL_CTL)
         .fast(&[d("chid", 0), d("cmd", 1)])
         .wide(&[d("chid", 0), d("cmd", 1)]),
-    ev("KER_CALL", "CHANNEL_CTL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CHANNEL_CTL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ChannelCtl
-    ev("KER_CALL", "CHANNEL_CTL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CHANNEL_CTL)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "CHANNEL_CTL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CHANNEL_CTL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: empty, pid
-    // Wide: empty, pid, chid, index, flags
-    // Call: ConnectAttach
-    ev("KER_CALL", "CONNECT_ATTACH")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CHANNEL_CTL),
+    ev(ClassId::KER_CALL_INT, kercall::CHANNEL_CTL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_ATTACH)
         .fast(&[h("nd", 0), d("pid", 1)])
         .wide(&[h("nd", 0), d("pid", 1), h("chid", 2), d("index", 3), h("flags", 4)]),
-    ev("KER_CALL", "CONNECT_ATTACH")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_ATTACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: coid, empty
-    // Wide: coid, empty
-    // Call: ConnectAttach
-    ev("KER_CALL", "CONNECT_ATTACH")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_ATTACH)
         .fast(&[h("coid", 0), h("empty", 1)])
         .wide(&[h("coid", 0), h("empty", 1)]),
-    ev("KER_CALL", "CONNECT_ATTACH")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_ATTACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: coid, empty
-    // Wide: coid, empty
-    // Call: ConnectDetach
-    ev("KER_CALL", "CONNECT_DETACH")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_ATTACH).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_ATTACH_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_DETACH)
         .fast(&[h("coid", 0), h("empty", 1)])
         .wide(&[h("coid", 0), h("empty", 1)]),
-    ev("KER_CALL", "CONNECT_DETACH")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_DETACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ConnectDetach
-    ev("KER_CALL", "CONNECT_DETACH")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_DETACH)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "CONNECT_DETACH")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_DETACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: pid, coid
-    // Wide: pid, coid
-    // Call: ConnectServerInfo
-    ev("KER_CALL", "CONNECT_SERVER_INFO")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_DETACH).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_DETACH_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_SERVER_INFO)
         .fast(&[d("pid", 0), h("coid", 1)])
         .wide(&[d("pid", 0), h("coid", 1)]),
-    ev("KER_CALL", "CONNECT_SERVER_INFO")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_SERVER_INFO_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: coid, empty
-    // Wide: coid, empty, empty, info->pid, info->tid, info->chid, info->scoid, info->coid, info->msglen, info->srcmsglen, info->dstmsglen, info->priority, info->flags, info->reserved
-    // Call: ConnectServerInfo
-    ev("KER_CALL", "CONNECT_SERVER_INFO")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_SERVER_INFO)
         .fast(&[h("coid", 0), d("info->nd", 1)])
         .wide(&[
             h("coid", 0),
@@ -1600,12 +1001,7 @@ pub const EVENTS: &[Ev] = &[
             d("info->flags", 12),
             d("info->reserved", 13),
         ]),
-    // Fast: coid, empty
-    // Wide: coid, empty, empty, info->pid, info->tid, info->chid, info->scoid, info->coid, info->msglen (64), info->srcmsglen (64), info->dstmsglen (64), info->priority, info->flags, info->reserved[0], info->reserved[1]
-    // Call: ConnectServerInfo
-    ev("KER_CALL", "CONNECT_SERVER_INFO")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_SERVER_INFO_64)
         .fast(&[h("coid", 0), d("info->nd", 1)])
         .wide(&[
             h("coid", 0),
@@ -1623,23 +1019,15 @@ pub const EVENTS: &[Ev] = &[
             d("info->flags", 15),
             d("info->reserved", 16),
         ]),
-    // Fast: scoid, ngroups
-    // Wide: scoid, ngroups
-    // Call: ConnectClientInfo
-    ev("KER_CALL", "CONNECT_CLIENT_INFO")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_SERVER_INFO).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_SERVER_INFO_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_CLIENT_INFO)
         .fast(&[h("scoid", 0), d("ngroups", 1)])
         .wide(&[h("scoid", 0), d("ngroups", 1)]),
-    ev("KER_CALL", "CONNECT_CLIENT_INFO")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_CLIENT_INFO_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty, info->pid, info->sid, flags, info->ruid, info->euid, info->suid, info->rgid, info->egid, info->sgid, info->ngroups, info->grouplist[0], info->grouplist[1], info->grouplist[2], info->grouplist[3], info->grouplist[4], info->grouplist[5], info->grouplist[6], info->grouplist[7]
-    // Call: ConnectClientInfo
-    ev("KER_CALL", "CONNECT_CLIENT_INFO")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_CLIENT_INFO)
         .fast(&[h("ret_val", 0), d("info->nd", 1)])
         .wide(&[
             h("ret_val", 0),
@@ -1663,58 +1051,40 @@ pub const EVENTS: &[Ev] = &[
             d("info->grouplist[6]", 18),
             d("info->grouplist[7]", 19),
         ]),
-    ev("KER_CALL", "CONNECT_CLIENT_INFO")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_CLIENT_INFO_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: coid, bits
-    // Wide: pid, coid, masks, bits
-    // Call: ConnectFlags
-    ev("KER_CALL", "CONNECT_FLAGS")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_CLIENT_INFO).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_CLIENT_INFO_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_FLAGS)
         .fast(&[h("coid", 0), h("bits", 1)])
         .wide(&[d("pid", 0), h("coid", 1), h("masks", 2), h("bits", 3)]),
-    ev("KER_CALL", "CONNECT_FLAGS")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_FLAGS_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: old_flags, empty
-    // Wide: old_flags, empty
-    // Call: ConnectFlags
-    ev("KER_CALL", "CONNECT_FLAGS")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_FLAGS)
         .fast(&[h("old_flags", 0), h("empty", 1)])
         .wide(&[h("old_flags", 0), h("empty", 1)]),
-    ev("KER_CALL", "CONNECT_FLAGS")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_FLAGS_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "CONNECT_DUPFD")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_FLAGS).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_FLAGS_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_DUPFD)
         .fast(&[u("op", 0)])
         .wide(&[u("op", 0)]),
-    ev("KER_CALL", "CONNECT_DUPFD")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CONNECT_DUPFD_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "CONNECT_DUPFD")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_DUPFD)
         .fast(&[d("result", 0)])
         .wide(&[d("result", 0)]),
-    ev("KER_CALL", "CONNECT_DUPFD")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CONNECT_DUPFD_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: func_p, arg_p
-    // Wide: pid, func_p, arg_p, flags, stacksize, stackaddr_p, exitfunc_p, policy, sched_priority, sched_curpriority, param.ss_low_priority, param.ss_max_repl, param.ss_repl_period.tv_sec, param.ss_repl_period.tv_nsec, param.ss_init_budget.tv_sec, param.ss_init_budget.tv_nsec, guardsize, empty, empty, empty
-    // Call: ThreadCreate
-    ev("KER_CALL", "THREAD_CREATE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_DUPFD).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CONNECT_DUPFD_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_CREATE)
         .fast(&[h("func_p", 0), h("arg_p", 1)])
         .wide(&[
             d("pid", 0),
@@ -1740,12 +1110,7 @@ pub const EVENTS: &[Ev] = &[
             d("empty", 20),
             d("empty", 21),
         ]),
-    // Fast: func_p (64)
-    // Wide: pid, func_p (64), arg_p (64), flags, pad, stacksize (64), stackaddr_p (64), exitfunc_p (64), policy, pad, sched_priority, sched_curpriority, param.ss_low_priority, param.ss_max_repl, param.ss_repl_period.tv_sec (64), param.ss_repl_period.tv_nsec (64), param.ss_init_budget.tv_sec (64), param.ss_init_budget.tv_nsec (64), guardsize, prealloc, empty, empty
-    // Call: ThreadCreate
-    ev("KER_CALL", "THREAD_CREATE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_CREATE_64)
         .fast(&[q("func_p", 0)])
         .wide(&[
             d("pid", 0),
@@ -1770,185 +1135,99 @@ pub const EVENTS: &[Ev] = &[
             d("empty", 27),
             d("empty", 28),
         ]),
-    // Fast: thread_id, owner
-    // Wide: thread_id, owner
-    // Call: ThreadCreate
-    ev("KER_CALL", "THREAD_CREATE")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_CREATE)
         .fast(&[h("thread_id", 0), h("owner", 1)])
         .wide(&[h("thread_id", 0), h("owner", 1)]),
-    ev("KER_CALL", "THREAD_CREATE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_CREATE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: tid, status_p
-    // Wide: tid, priority, status_p
-    // Call: ThreadDestroy
-    ev("KER_CALL", "THREAD_DESTROY")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_CREATE).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_CREATE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_DESTROY)
         .fast(&[d("tid", 0), h("status_p", 1)])
         .wide(&[d("tid", 0), d("priority", 1), h("status_p", 2)]),
-    // Fast: N/A
-    // Wide: tid, priority, status_p (64)
-    // Call: ThreadDestroy
-    ev("KER_CALL", "THREAD_DESTROY").kind("ENTER").is64().fast(&[]).wide(&[
-        d("tid", 0),
-        d("priority", 1),
-        q("status_p", 2),
-    ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ThreadDestroy
-    ev("KER_CALL", "THREAD_DESTROY")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_DESTROY_64)
+        .fast(&[])
+        .wide(&[d("tid", 0), d("priority", 1), q("status_p", 2)]),
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_DESTROY)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "THREAD_DESTROY")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_DESTROY_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: tid, empty
-    // Wide: tid, empty
-    // Call: ThreadDetach
-    ev("KER_CALL", "THREAD_DETACH")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_DESTROY).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_DESTROY_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_DETACH)
         .fast(&[d("tid", 0), h("empty", 1)])
         .wide(&[d("tid", 0), h("empty", 1)]),
-    ev("KER_CALL", "THREAD_DETACH")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_DETACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ThreadDetach
-    ev("KER_CALL", "THREAD_DETACH")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_DETACH)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "THREAD_DETACH")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_DETACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: tid, status_p
-    // Wide: tid, status_p
-    // Call: ThreadJoin
-    ev("KER_CALL", "THREAD_JOIN")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_DETACH).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_DETACH_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_JOIN)
         .fast(&[d("tid", 0), h("status_p", 1)])
         .wide(&[d("tid", 0), h("status_p", 1)]),
-    // Fast: N/A
-    // Wide: tid, status_p (64)
-    // Call: ThreadJoin
-    ev("KER_CALL", "THREAD_JOIN")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_JOIN_64)
         .fast(&[])
         .wide(&[d("tid", 0), q("status_p", 1)]),
-    // Fast: ret_val, status_p
-    // Wide: ret_val, status_p
-    // Call: ThreadJoin
-    ev("KER_CALL", "THREAD_JOIN")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_JOIN)
         .fast(&[h("ret_val", 0), h("status_p", 1)])
         .wide(&[h("ret_val", 0), h("status_p", 1)]),
-    // Fast: N/A
-    // Wide: ret_val, status_p (64)
-    // Call: ThreadJoin
-    ev("KER_CALL", "THREAD_JOIN")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_JOIN_64)
         .fast(&[])
         .wide(&[h("ret_val", 0), q("status_p", 1)]),
-    // Fast: tid, canstub_p
-    // Wide: tid, canstub_p
-    // Call: ThreadCancel
-    ev("KER_CALL", "THREAD_CANCEL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_JOIN).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_JOIN_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_CANCEL)
         .fast(&[d("tid", 0), h("canstub_p", 1)])
         .wide(&[d("tid", 0), h("canstub_p", 1)]),
-    // Fast: N/A
-    // Wide: tid, canstub_p (64)
-    // Call: ThreadCancel
-    ev("KER_CALL", "THREAD_CANCEL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_CANCEL_64)
         .fast(&[])
         .wide(&[d("tid", 0), q("canstub_p", 1)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ThreadCancel
-    ev("KER_CALL", "THREAD_CANCEL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_CANCEL)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "THREAD_CANCEL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_CANCEL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: cmd, data_p
-    // Wide: cmd, data_p
-    // Call: ThreadCtl
-    ev("KER_CALL", "THREAD_CTL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_CANCEL).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_CANCEL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_CTL)
         .fast(&[h("cmd", 0), h("data_p", 1)])
         .wide(&[h("cmd", 0), h("data_p", 1)]),
-    // Fast: N/A
-    // Wide: cmd, data_p (64)
-    // Call: ThreadCtl
-    ev("KER_CALL", "THREAD_CTL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_CTL_64)
         .fast(&[])
         .wide(&[h("cmd", 0), q("data_p", 1)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ThreadCtl
-    ev("KER_CALL", "THREAD_CTL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_CTL)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "THREAD_CTL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_CTL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: pid, tid
-    // Wide: pid, tid, cmd, data_p
-    // Call: ThreadCtlExt
-    ev("KER_CALL", "THREAD_CTLEXT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_CTL).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_CTL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_CTLEXT)
         .fast(&[h("pid", 0), h("tid", 1)])
         .wide(&[h("pid", 0), h("tid", 1), h("cmd", 2), h("data_p", 3)]),
-    // Fast: pid, tid
-    // Wide: pid, tid, cmd, data_p (64)
-    // Call: ThreadCtlExt
-    ev("KER_CALL", "THREAD_CTLEXT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::THREAD_CTLEXT_64)
         .fast(&[h("pid", 0), h("tid", 1)])
         .wide(&[h("pid", 0), h("tid", 1), h("cmd", 2), q("data_p", 3)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ThreadCtlExt
-    ev("KER_CALL", "THREAD_CTLEXT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_CTLEXT)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "THREAD_CTLEXT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::THREAD_CTLEXT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: intr, flags
-    // Wide: intr, handler_p, area_p, areasize, flags
-    // Call: InterruptAttachThread, InterruptAttachEvent
-    ev("KER_CALL", "INTERRUPT_ATTACH")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_CTLEXT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::THREAD_CTLEXT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_ATTACH)
         .fast(&[d("intr", 0), h("flags", 1)])
         .wide(&[
             d("intr", 0),
@@ -1957,12 +1236,7 @@ pub const EVENTS: &[Ev] = &[
             d("areasize", 3),
             h("flags", 4),
         ]),
-    // Fast: intr, flags
-    // Wide: intr, handler_p (64), area_p (64), areasize, flags
-    // Call: InterruptAttachThread, InterruptAttachEvent
-    ev("KER_CALL", "INTERRUPT_ATTACH")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_ATTACH_64)
         .fast(&[d("intr", 0), h("flags", 1)])
         .wide(&[
             d("intr", 0),
@@ -1971,275 +1245,169 @@ pub const EVENTS: &[Ev] = &[
             d("areasize", 5),
             h("flags", 6),
         ]),
-    // Fast: int_fun_id, empty
-    // Wide: int_fun_id, empty
-    // Call: InterruptAttachThread, InterruptAttachEvent
-    ev("KER_CALL", "INTERRUPT_ATTACH")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_ATTACH)
         .fast(&[h("int_fun_id", 0), h("empty", 1)])
         .wide(&[h("int_fun_id", 0), h("empty", 1)]),
-    ev("KER_CALL", "INTERRUPT_ATTACH")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_ATTACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: type, id
-    // Wide: type, id
-    // Call: InterruptQuery
-    ev("KER_CALL", "INTERRUPT_QUERY")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_ATTACH).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_ATTACH_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_QUERY)
         .fast(&[d("type", 0), d("id", 1)])
         .wide(&[d("type", 0), d("id", 1)]),
-    ev("KER_CALL", "INTERRUPT_QUERY")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_QUERY_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: InterruptQuery
-    ev("KER_CALL", "INTERRUPT_QUERY")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_QUERY)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "INTERRUPT_QUERY")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_QUERY_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: id, empty
-    // Wide: id, empty
-    // Call: InterruptDetach
-    ev("KER_CALL", "INTERRUPT_DETACH")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_QUERY),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_QUERY_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_DETACH)
         .fast(&[d("id", 0), h("empty", 1)])
         .wide(&[d("id", 0), h("empty", 1)]),
-    ev("KER_CALL", "INTERRUPT_DETACH")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_DETACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: InterruptDetach
-    ev("KER_CALL", "INTERRUPT_DETACH")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_DETACH)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "INTERRUPT_DETACH")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_DETACH_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: flags, timeout_tv_sec
-    // Wide: flags, timeout_tv_sec, timeout_tv_nsec
-    // Call: InterruptWait
-    ev("KER_CALL", "INTERRUPT_WAIT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_DETACH).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_DETACH_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_WAIT)
         .fast(&[h("flags", 0), d("timeout_tv_sec", 1)])
         .wide(&[h("flags", 0), d("timeout_tv_sec", 1), d("timeout_tv_nsec", 2)]),
-    ev("KER_CALL", "INTERRUPT_WAIT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_WAIT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, timeout_p
-    // Wide: ret_val, timeout_p
-    // Call: InterruptWait
-    ev("KER_CALL", "INTERRUPT_WAIT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_WAIT)
         .fast(&[d("ret_val", 0), h("timeout", 1)])
         .wide(&[d("ret_val", 0), h("timeout", 1)]),
-    // Fast: N/A
-    // Wide: ret_val, timeout_p (64)
-    // Call: InterruptWait
-    ev("KER_CALL", "INTERRUPT_WAIT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_WAIT_64)
         .fast(&[])
         .wide(&[d("ret_val", 0), q("timeout", 1)]),
-    // Fast: intr, id
-    // Wide: intr, id
-    // Call: InterruptMask
-    ev("KER_CALL", "INTERRUPT_MASK")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_WAIT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_WAIT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_MASK)
         .fast(&[d("intr", 0), d("id", 1)])
         .wide(&[d("intr", 0), d("id", 1)]),
-    ev("KER_CALL", "INTERRUPT_MASK")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_MASK_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: mask_level, empty
-    // Wide: mask_level, empty
-    // Call: InterruptMask
-    ev("KER_CALL", "INTERRUPT_MASK")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_MASK)
         .fast(&[h("mask_level", 0), h("empty", 1)])
         .wide(&[h("mask_level", 0), h("empty", 1)]),
-    ev("KER_CALL", "INTERRUPT_MASK")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_MASK_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: intr, id
-    // Wide: intr, id
-    // Call: InterruptUnmask
-    ev("KER_CALL", "INTERRUPT_UNMASK")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_MASK).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_MASK_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_UNMASK)
         .fast(&[d("intr", 0), d("id", 1)])
         .wide(&[d("intr", 0), d("id", 1)]),
-    ev("KER_CALL", "INTERRUPT_UNMASK")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_UNMASK_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: mask_level, empty
-    // Wide: mask_level, empty
-    // Call: InterruptUnmask
-    ev("KER_CALL", "INTERRUPT_UNMASK")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_UNMASK)
         .fast(&[h("mask_level", 0), h("empty", 1)])
         .wide(&[h("mask_level", 0), h("empty", 1)]),
-    ev("KER_CALL", "INTERRUPT_UNMASK")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_UNMASK_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "INTERRUPT_UNBLOCK")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_UNMASK).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_UNMASK_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_UNBLOCK)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "INTERRUPT_UNBLOCK")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_UNBLOCK_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "INTERRUPT_UNBLOCK")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_UNBLOCK)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "INTERRUPT_UNBLOCK")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_UNBLOCK_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "INTERRUPT_CTL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_UNBLOCK),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_UNBLOCK_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_CTL)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "INTERRUPT_CTL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::INTERRUPT_CTL_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "INTERRUPT_CTL").kind("EXIT").fast_silent().wide_silent(),
-    ev("KER_CALL", "INTERRUPT_CTL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_CTL)
         .fast_silent()
         .wide_silent(),
-    // Fast: id, new(sec)
-    // Wide: id, new(sec), new(nsec)
-    // Call: ClockTime
-    ev("KER_CALL", "CLOCK_TIME")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_EXIT, kercall::INTERRUPT_CTL_64)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_CTL),
+    ev(ClassId::KER_CALL_INT, kercall::INTERRUPT_CTL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CLOCK_TIME)
         .fast(&[d("id", 0), d("new(sec)", 1)])
         .wide(&[d("id", 0), d("new(sec)", 1), d("new(nsec)", 2)]),
-    ev("KER_CALL", "CLOCK_TIME")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CLOCK_TIME_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, old(sec)
-    // Wide: ret_val, old(sec), old(nsec)
-    // Call: ClockTime
-    ev("KER_CALL", "CLOCK_TIME")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CLOCK_TIME)
         .fast(&[d("ret_val", 0), d("old(sec)", 1)])
         .wide(&[d("ret_val", 0), d("old(sec)", 1), d("old(nsec)", 2)]),
-    ev("KER_CALL", "CLOCK_TIME")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CLOCK_TIME_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: id, new->tick_count
-    // Wide: id, new->tick_count, new->tick_nsec_inc
-    // Call: ClockAdjust
-    ev("KER_CALL", "CLOCK_ADJUST")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CLOCK_TIME).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CLOCK_TIME_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CLOCK_ADJUST)
         .fast(&[d("id", 0), d("new->tick_count", 1)])
         .wide(&[d("id", 0), d("new->tick_count", 1), d("new->tick_nsec_inc", 2)]),
-    ev("KER_CALL", "CLOCK_ADJUST")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CLOCK_ADJUST_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, old->tick_count
-    // Wide: ret_val, old->tick_count, old->tick_nsec_inc
-    // Call: ClockAdjust
-    ev("KER_CALL", "CLOCK_ADJUST")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CLOCK_ADJUST)
         .fast(&[d("ret_val", 0), d("old->tick_count", 1)])
         .wide(&[d("ret_val", 0), d("old->tick_count", 1), d("old->tick_nsec_inc", 2)]),
-    ev("KER_CALL", "CLOCK_ADJUST")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CLOCK_ADJUST_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: id, new->nsec
-    // Wide: id, new->nsec, new->fract
-    // Call: ClockPeriod
-    ev("KER_CALL", "CLOCK_PERIOD")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CLOCK_ADJUST).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CLOCK_ADJUST_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CLOCK_PERIOD)
         .fast(&[d("id", 0), d("new->nsec", 1)])
         .wide(&[d("id", 0), d("new->nsec", 1), d("new->fract", 2)]),
-    ev("KER_CALL", "CLOCK_PERIOD")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CLOCK_PERIOD_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, old->nsec
-    // Wide: ret_val, old->nsec, old->fract
-    // Call: ClockPeriod
-    ev("KER_CALL", "CLOCK_PERIOD")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CLOCK_PERIOD)
         .fast(&[d("ret_val", 0), d("old->nsec", 1)])
         .wide(&[d("ret_val", 0), d("old->nsec", 1), d("old->fract", 2)]),
-    ev("KER_CALL", "CLOCK_PERIOD")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CLOCK_PERIOD_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: pid, tid
-    // Wide: pid, tid
-    // Call: ClockId
-    ev("KER_CALL", "CLOCK_ID")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CLOCK_PERIOD).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CLOCK_PERIOD_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::CLOCK_ID)
         .fast(&[d("pid", 0), d("tid", 1)])
         .wide(&[d("pid", 0), d("tid", 1)]),
-    ev("KER_CALL", "CLOCK_ID")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::CLOCK_ID_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: ClockId
-    ev("KER_CALL", "CLOCK_ID")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::CLOCK_ID)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "CLOCK_ID")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::CLOCK_ID_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: timer_id, event->sigev_notify
-    // Wide: timer_id, event->sigev_notify, event->sigev_notify_function_p, event->sigev_value, event->sigev_notify_attributes_p
-    // Call: TimerCreate
-    ev("KER_CALL", "TIMER_CREATE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::CLOCK_ID).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::CLOCK_ID_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_CREATE)
         .fast(&[h("id", 0), d("event->sigev_notify", 1)])
         .wide(&[
             h("id", 0),
@@ -2248,12 +1416,7 @@ pub const EVENTS: &[Ev] = &[
             h("event->sigev_value", 3),
             h("event->sigev_notify_attributes_p", 4),
         ]),
-    // Fast: timer_id, event->sigev_notify
-    // Wide: timer_id, event->sigev_notify, pad, event->sigev_notify_function_p (64), event->sigev_value (64), event->sigev_notify_attributes_p (64)
-    // Call: TimerCreate
-    ev("KER_CALL", "TIMER_CREATE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_CREATE_64)
         .fast(&[h("id", 0), d("event->sigev_notify", 1)])
         .wide(&[
             h("id", 0),
@@ -2263,47 +1426,29 @@ pub const EVENTS: &[Ev] = &[
             q("event->sigev_value", 5),
             q("event->sigev_notify_attributes_p", 7),
         ]),
-    // Fast: timer_id, empty
-    // Wide: timer_id, empty
-    // Call: TimerCreate
-    ev("KER_CALL", "TIMER_CREATE")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_CREATE)
         .fast(&[h("timer_id", 0), h("empty", 1)])
         .wide(&[h("timer_id", 0), h("empty", 1)]),
-    ev("KER_CALL", "TIMER_CREATE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_CREATE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: id, empty
-    // Wide: id, empty
-    // Call: TimerDestroy
-    ev("KER_CALL", "TIMER_DESTROY")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_CREATE).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_CREATE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_DESTROY)
         .fast(&[h("id", 0), h("empty", 1)])
         .wide(&[h("id", 0), h("empty", 1)]),
-    ev("KER_CALL", "TIMER_DESTROY")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_DESTROY_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: TimerDestroy
-    ev("KER_CALL", "TIMER_DESTROY")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_DESTROY)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "TIMER_DESTROY")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_DESTROY_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: clock_id, itime->nsec_sec
-    // Wide: clock_id, flags, itime->nsec_sec, itime->nsec_nsec, itime->interval_nsec_sec, itime->interval_nsec_nsec
-    // Call: TimerSettime
-    ev("KER_CALL", "TIMER_SETTIME")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_DESTROY).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_DESTROY_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_SETTIME)
         .fast(&[h("id", 0), d("itime->nsec(sec)", 1)])
         .wide(&[
             h("id", 0),
@@ -2313,16 +1458,10 @@ pub const EVENTS: &[Ev] = &[
             d("itime->interval_nsec(sec)", 4),
             d("itime->interval_nsec(nsec)", 5),
         ]),
-    ev("KER_CALL", "TIMER_SETTIME")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_SETTIME_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, oitime->nsec
-    // Wide: ret_val, oitime->nsec_sec, oitime->nsec_nsec, oitime->interval_nsec_sec, oitime->interval_nsec_nsec
-    // Call: TimerSettime
-    ev("KER_CALL", "TIMER_SETTIME")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_SETTIME)
         .fast(&[h("ret_val", 0), d("oitime->nsec(sec)", 1)])
         .wide(&[
             h("ret_val", 0),
@@ -2331,31 +1470,18 @@ pub const EVENTS: &[Ev] = &[
             d("oitime->interval_nsec(sec)", 3),
             d("oitime->interval_nsec(nsec)", 4),
         ]),
-    ev("KER_CALL", "TIMER_SETTIME")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_SETTIME_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: pid, id
-    // Wide: pid, id, flags, info_p
-    // Call: TimerInfo
-    ev("KER_CALL", "TIMER_INFO")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_SETTIME).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_SETTIME_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_INFO)
         .fast(&[d("pid", 0), h("id", 1)])
         .wide(&[d("pid", 0), h("id", 1), h("flags", 2), h("info_p", 3)]),
-    // Fast: pid, id
-    // Wide: pid, id, flags, info_p (64)
-    // Call: TimerInfo
-    ev("KER_CALL", "TIMER_INFO")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_INFO_64)
         .fast(&[d("pid", 0), h("id", 1)])
         .wide(&[d("pid", 0), h("id", 1), h("flags", 2), q("info_p", 3)]),
-    // Fast: prev_id, info->itime.nsec
-    // Wide: prev_id, info->itime.nsec, info->itime.interval_nsec, info->otime.nsec, info->otime.interval_nsec, info->flags, info->tid, info->notify, info->clockid, info->overruns, info->event.sigev_notify, info->event.sigev_notify_function_p, info->event.sigev_value, info->event.sigev_notify_attributes_p
-    // Call: TimerInfo
-    ev("KER_CALL", "TIMER_INFO")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_INFO)
         .fast(&[d("prev_id", 0), d("info->itime.nsec(sec)", 1)])
         .wide(&[
             d("prev_id", 0),
@@ -2377,12 +1503,7 @@ pub const EVENTS: &[Ev] = &[
             h("info->event.sigev_value", 16),
             h("info->event.sigev_notify_attributes_p", 17),
         ]),
-    // Fast: prev_id, info->itime.nsec
-    // Wide: prev_id, info->itime.nsec, info->itime.interval_nsec, info->otime.nsec, info->otime.interval_nsec, info->flags, info->tid, info->notify, info->clockid, info->overruns, info->event.sigev_notify, pad, info->event.sigev_notify_function_p (64), info->event.sigev_value (64), info->event.sigev_notify_attributes_p (64)
-    // Call: TimerInfo
-    ev("KER_CALL", "TIMER_INFO")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_INFO_64)
         .fast(&[d("prev_id", 0), d("info->itime.nsec(sec)", 1)])
         .wide(&[
             d("prev_id", 0),
@@ -2405,11 +1526,9 @@ pub const EVENTS: &[Ev] = &[
             q("info->event.sigev_value", 18),
             q("info->event.sigev_notify_attributes_p", 20),
         ]),
-    // Fast: clock_id, itime->nsec_sec
-    // Wide: clock_id, itime->nsec_sec, itime->nsec_nsec, itime->interval_nsec_sec, itime->interval_nsec_nsec
-    // Call: TimerAlarm
-    ev("KER_CALL", "TIMER_ALARM")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_INFO).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_INFO_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_ALARM)
         .fast(&[h("id", 0), d("itime->nsec(sec)", 1)])
         .wide(&[
             h("id", 0),
@@ -2418,16 +1537,10 @@ pub const EVENTS: &[Ev] = &[
             d("itime->interval_nsec(sec)", 3),
             d("itime->interval_nsec(nsec)", 4),
         ]),
-    ev("KER_CALL", "TIMER_ALARM")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_ALARM_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, otime->nsec_sec
-    // Wide: ret_val, otime->nsec_sec, otime->nsec_nsec, otime->interval_nsec_sec, otime->interval_nsec_nsec
-    // Call: TimerAlarm
-    ev("KER_CALL", "TIMER_ALARM")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_ALARM)
         .fast(&[h("ret_val", 0), d("oitime->nsec(sec)", 1)])
         .wide(&[
             h("ret_val", 0),
@@ -2436,16 +1549,12 @@ pub const EVENTS: &[Ev] = &[
             d("oitime->interval_nsec(sec)", 3),
             d("oitime->interval_nsec(nsec)", 4),
         ]),
-    ev("KER_CALL", "TIMER_ALARM")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_ALARM_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: clock_id, timeout_flags, ntime_sec
-    // Wide: clock_id, timeout_flags, ntime_sec, ntime_nsec, event->sigev_notify, event->sigev_notify_function_p, event->sigev_value, event->sigev_notify_attributes_p, empty
-    // Call: TimerTimeout
-    ev("KER_CALL", "TIMER_TIMEOUT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_ALARM).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_ALARM_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_TIMEOUT)
         .fast(&[h("timeout_flags", 0), d("ntime(sec)", 1)])
         .wide(&[
             d("id", 0),
@@ -2457,12 +1566,7 @@ pub const EVENTS: &[Ev] = &[
             h("event->sigev_value", 6),
             h("event->sigev_notify_attributes_p", 7),
         ]),
-    // Fast: clock_id, timeout_flags, ntime_sec
-    // Wide: clock_id, timeout_flags, ntime_sec, ntime_nsec, event->sigev_notify, pad, event->sigev_notify_function_p (64), event->sigev_value (64), event->sigev_notify_attributes_p (64)
-    // Call: TimerTimeout
-    ev("KER_CALL", "TIMER_TIMEOUT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_TIMEOUT_64)
         .fast(&[h("timeout_flags", 0), d("ntime(sec)", 1)])
         .wide(&[
             d("id", 0),
@@ -2475,68 +1579,43 @@ pub const EVENTS: &[Ev] = &[
             q("event->sigev_value", 8),
             q("event->sigev_notify_attributes_p", 10),
         ]),
-    // Fast: prev_timeout_flags, otime_sec
-    // Wide: prev_timeout_flags, otime_sec, otime_nsec, empty
-    // Call: TimerTimeout
-    ev("KER_CALL", "TIMER_TIMEOUT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_TIMEOUT)
         .fast(&[h("prev_timeout_flags", 0), d("otime(sec)", 1)])
         .wide(&[h("prev_timeout_flags", 0), d("otime(sec)", 1), d("otime(nsec)", 2)]),
-    ev("KER_CALL", "TIMER_TIMEOUT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_TIMEOUT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: action, delegate_cpu
-    // Wide: action, delegate_cpu
-    // Call: TimerDelegate
-    ev("KER_CALL", "TIMER_DELEGATE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_TIMEOUT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_TIMEOUT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_DELEGATE)
         .fast(&[d("action", 0), d("delegate_cpu", 1)])
         .wide(&[d("action", 0), d("delegate_cpu", 1)]),
-    ev("KER_CALL", "TIMER_DELEGATE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::TIMER_DELEGATE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: TimerDelegate
-    ev("KER_CALL", "TIMER_DELEGATE")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_DELEGATE)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "TIMER_DELEGATE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TIMER_DELEGATE_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "SYNC_RWLOCK").kind("ENTER").fast_silent().wide_silent(),
-    // Fast: syncp(64), op, count, owner
-    // Wide: syncp(64), op, count, owner
-    // Call: SyncRWLock
-    ev("KER_CALL", "SYNC_RWLOCK")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_DELEGATE),
+    ev(ClassId::KER_CALL_INT, kercall::TIMER_DELEGATE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_RWLOCK)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_RWLOCK_64)
         .fast(&[q("syncp", 0)])
         .wide(&[q("syncp", 0), d("op", 2), d("count", 3), d("owner", 4)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncRWLock
-    ev("KER_CALL", "SYNC_RWLOCK")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_RWLOCK)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_RWLOCK")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_RWLOCK_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: type, sync_p
-    // Wide: type, sync_p, count, owner, protocol, flags, prioceiling, clockid
-    // Call: SyncCreate
-    ev("KER_CALL", "SYNC_CREATE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_RWLOCK),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_RWLOCK_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_CREATE)
         .fast(&[d("type", 0), h("sync_p", 1)])
         .wide(&[
             d("type", 0),
@@ -2548,12 +1627,7 @@ pub const EVENTS: &[Ev] = &[
             d("prioceiling", 6),
             d("clockid", 7),
         ]),
-    // Fast: N/A
-    // Wide: type, sync_p (64), count, owner, protocol, flags, prioceiling, clockid
-    // Call: SyncCreate
-    ev("KER_CALL", "SYNC_CREATE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_CREATE_64)
         .fast(&[d("type", 0)])
         .wide(&[
             d("type", 0),
@@ -2565,104 +1639,57 @@ pub const EVENTS: &[Ev] = &[
             d("prioceiling", 7),
             d("clockid", 8),
         ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncCreate
-    ev("KER_CALL", "SYNC_CREATE")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_CREATE)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_CREATE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_CREATE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sync_p, owner
-    // Wide: sync_p, count, owner
-    // Call: SyncDestroy
-    ev("KER_CALL", "SYNC_DESTROY")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_CREATE).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_CREATE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_DESTROY)
         .fast(&[h("sync_p", 0), d("owner", 1)])
         .wide(&[h("sync_p", 0), d("count", 1), d("owner", 2)]),
-    // Fast: sync_p (64)
-    // Wide: sync_p (64), count, owner
-    // Call: SyncDestroy
-    ev("KER_CALL", "SYNC_DESTROY")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_DESTROY_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[q("sync_p", 0), d("count", 2), d("owner", 3)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncDestroy
-    ev("KER_CALL", "SYNC_DESTROY")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_DESTROY)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_DESTROY")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_DESTROY_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sync_p, owner
-    // Wide: sync_p, count, owner
-    // Call: SyncMutexLock
-    ev("KER_CALL", "SYNC_MUTEX_LOCK")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_DESTROY).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_DESTROY_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_MUTEX_LOCK)
         .fast(&[h("sync_p", 0), d("owner", 1)])
         .wide(&[h("sync_p", 0), d("count", 1), d("owner", 2)]),
-    // Fast: sync_p (64)
-    // Wide: sync_p (64), count, owner
-    // Call: SyncMutexLock
-    ev("KER_CALL", "SYNC_MUTEX_LOCK")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_MUTEX_LOCK_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[q("sync_p", 0), d("count", 2), d("owner", 3)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncMutexLock
-    ev("KER_CALL", "SYNC_MUTEX_LOCK")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_MUTEX_LOCK)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_MUTEX_LOCK")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_MUTEX_LOCK_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sync_p, owner
-    // Wide: sync_p, count, owner
-    // Call: SyncMutexUnlock
-    ev("KER_CALL", "SYNC_MUTEX_UNLOCK")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_MUTEX_LOCK).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_MUTEX_LOCK_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_MUTEX_UNLOCK)
         .fast(&[h("sync_p", 0), d("owner", 1)])
         .wide(&[h("sync_p", 0), d("count", 1), d("owner", 2)]),
-    // Fast: sync_p (64), owner
-    // Wide: sync_p (64), count, owner
-    // Call: SyncMutexUnlock
-    ev("KER_CALL", "SYNC_MUTEX_UNLOCK")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_MUTEX_UNLOCK_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[q("sync_p", 0), d("count", 2), d("owner", 3)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncMutexUnlock
-    ev("KER_CALL", "SYNC_MUTEX_UNLOCK")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_MUTEX_UNLOCK)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_MUTEX_UNLOCK")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_MUTEX_UNLOCK_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sync_p, mutex_p
-    // Wide: sync_p, mutex_p, sync->count, sync->owner, mutex->count, mutex->owner
-    // Call: SyncCondvarWait
-    ev("KER_CALL", "SYNC_CONDVAR_WAIT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_MUTEX_UNLOCK).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_MUTEX_UNLOCK_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_CONDVAR_WAIT)
         .fast(&[h("sync_p", 0), h("mutex_p", 1)])
         .wide(&[
             h("sync_p", 0),
@@ -2672,12 +1699,7 @@ pub const EVENTS: &[Ev] = &[
             d("mutex->count", 4),
             d("mutex->owner", 5),
         ]),
-    // Fast: sync_p (64)
-    // Wide: sync_p (64), mutex_p (64), sync->count, sync->owner, mutex->count, mutex->owner
-    // Call: SyncCondvarWait
-    ev("KER_CALL", "SYNC_CONDVAR_WAIT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_CONDVAR_WAIT_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[
             q("sync_p", 0),
@@ -2687,106 +1709,57 @@ pub const EVENTS: &[Ev] = &[
             d("mutex->count", 6),
             d("mutex->owner", 7),
         ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncCondvarWait
-    ev("KER_CALL", "SYNC_CONDVAR_WAIT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_CONDVAR_WAIT)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_CONDVAR_WAIT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_CONDVAR_WAIT_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "SYNC_CONDVAR_WAIT").kind("INT").intcall(),
-    ev("KER_CALL", "SYNC_CONDVAR_WAIT").kind("INT").is64().wide_silent(),
-    // Fast: sync_p, all
-    // Wide: sync_p, all, sync->count, sync->owner
-    // Call: SyncCondvarSignal
-    ev("KER_CALL", "SYNC_CONDVAR_SIGNAL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_CONDVAR_WAIT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_CONDVAR_WAIT_64).wide_silent(),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_CONDVAR_SIGNAL)
         .fast(&[h("sync_p", 0), d("all", 1)])
         .wide(&[h("sync_p", 0), d("all", 1), d("sync->count", 2), d("sync->owner", 3)]),
-    // Fast: sync_p (64)
-    // Wide: sync_p (64), all, sync->count, sync->owner
-    // Call: SyncCondvarSignal
-    ev("KER_CALL", "SYNC_CONDVAR_SIGNAL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_CONDVAR_SIGNAL_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[q("sync_p", 0), d("all", 2), d("sync->count", 3), d("sync->owner", 4)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncCondvarSignal
-    ev("KER_CALL", "SYNC_CONDVAR_SIGNAL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_CONDVAR_SIGNAL)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_CONDVAR_SIGNAL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_CONDVAR_SIGNAL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sync_p, count
-    // Wide: sync_p, count, owner
-    // Call: SyncSemPost
-    ev("KER_CALL", "SYNC_SEM_POST")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_CONDVAR_SIGNAL).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_CONDVAR_SIGNAL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_SEM_POST)
         .fast(&[h("sync_p", 0), d("count", 1)])
         .wide(&[h("sync_p", 0), d("count", 1), d("owner", 2)]),
-    // Fast: sync_p (64)
-    // Wide: sync_p (64), count, owner
-    // Call: SyncSemPost
-    ev("KER_CALL", "SYNC_SEM_POST")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_SEM_POST_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[q("sync_p", 0), d("count", 2), d("owner", 3)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncSemPost
-    ev("KER_CALL", "SYNC_SEM_POST")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_SEM_POST)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_SEM_POST")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_SEM_POST_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sync_p, count
-    // Wide: sync_p, try, count, owner
-    // Call: SyncSemWait
-    ev("KER_CALL", "SYNC_SEM_WAIT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_SEM_POST).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_SEM_POST_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_SEM_WAIT)
         .fast(&[h("sync_p", 0), d("count", 1)])
         .wide(&[h("sync_p", 0), d("try", 1), d("count", 2), d("owner", 3)]),
-    // Fast: sync_p (64)
-    // Wide: sync_p (64), try, count, owner
-    // Call: SyncSemWait
-    ev("KER_CALL", "SYNC_SEM_WAIT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_SEM_WAIT_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[q("sync_p", 0), d("try", 2), d("count", 3), d("owner", 4)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncSemWait
-    ev("KER_CALL", "SYNC_SEM_WAIT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_SEM_WAIT)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_SEM_WAIT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_SEM_WAIT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: cmd, sync_p
-    // Wide: cmd, sync_p, data_p, count, owner
-    // Call: SyncCtl
-    ev("KER_CALL", "SYNC_CTL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_SEM_WAIT).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_SEM_WAIT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_CTL)
         .fast(&[d("cmd", 0), h("sync_p", 1)])
         .wide(&[
             d("cmd", 0),
@@ -2795,12 +1768,7 @@ pub const EVENTS: &[Ev] = &[
             d("count", 3),
             d("owner", 4),
         ]),
-    // Fast: cmd
-    // Wide: cmd, sync_p (64), data_p (64), count, owner
-    // Call: SyncCtl
-    ev("KER_CALL", "SYNC_CTL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_CTL_64)
         .fast(&[d("cmd", 0)])
         .wide(&[
             d("cmd", 0),
@@ -2809,59 +1777,35 @@ pub const EVENTS: &[Ev] = &[
             d("count", 5),
             d("owner", 6),
         ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncCtl
-    ev("KER_CALL", "SYNC_CTL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_CTL)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_CTL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_CTL_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "SYNC_BARRIER_WAIT")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_CTL).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_CTL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_BARRIER_WAIT)
         .fast_silent()
         .wide_silent(),
-    // Fast: sync_p(64)
-    // Wide: sync_p(64), count, owner
-    // Call: SyncBarrierWait
-    ev("KER_CALL", "SYNC_BARRIER_WAIT")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_BARRIER_WAIT_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[q("sync_p", 0), d("count", 2), d("owner", 3)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncBarrierWait
-    ev("KER_CALL", "SYNC_BARRIER_WAIT")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_BARRIER_WAIT)
         .fast(&[d("ret_val", 0)])
         .wide(&[d("ret_val", 0)]),
-    ev("KER_CALL", "SYNC_BARRIER_WAIT")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_BARRIER_WAIT_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: pid, tid
-    // Wide: pid, tid
-    // Call: SchedGet
-    ev("KER_CALL", "SCHED_GET")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_BARRIER_WAIT),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_BARRIER_WAIT_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_GET)
         .fast(&[d("pid", 0), d("tid", 1)])
         .wide(&[d("pid", 0), d("tid", 1)]),
-    ev("KER_CALL", "SCHED_GET")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_GET_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, sched_priority
-    // Wide: ret_val, sched_priority, sched_curpriority, param.ss_low_priority, param.ss_max_repl, param.ss_repl_period.tv_sec, param.ss_repl_period.tv_nsec, param.ss_init_budget.tv_sec, param.ss_init_budget.tv_nsec
-    // Call: SchedGet
-    ev("KER_CALL", "SCHED_GET")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_GET)
         .fast(&[d("ret_val", 0), d("sched_priority", 1)])
         .wide(&[
             d("ret_val", 0),
@@ -2876,12 +1820,7 @@ pub const EVENTS: &[Ev] = &[
             d("param.empty", 9),
             d("param.empty", 10),
         ]),
-    // Fast: ret_val, sched_priority
-    // Wide: ret_val, sched_priority, sched_curpriority, param.ss_low_priority, param.ss_max_repl, param.ss_repl_period.tv_sec (64), param.ss_repl_period.tv_nsec (64), param.ss_init_budget.tv_sec (64), param.ss_init_budget.tv_nsec (64)
-    // Call: SchedGet
-    ev("KER_CALL", "SCHED_GET")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_GET_64)
         .fast(&[d("ret_val", 0), d("sched_priority", 1)])
         .wide(&[
             d("ret_val", 0),
@@ -2894,11 +1833,9 @@ pub const EVENTS: &[Ev] = &[
             e("param.__ss_init_budget.tv_sec", 9),
             e("param.__ss_init_budget.tv_nsec", 11),
         ]),
-    // Fast: pid, sched_priority
-    // Wide: pid, tid, policy, sched_priority, sched_curpriority, param.ss_low_priority, param.ss_max_repl, param.ss_repl_period.tv_sec, param.ss_repl_period.tv_nsec, param.ss_init_budget.tv_sec, param.ss_init_budget.tv_nsec
-    // Call: SchedSet
-    ev("KER_CALL", "SCHED_SET")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_GET).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_GET_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_SET)
         .fast(&[d("pid", 0), d("sched_priority", 1)])
         .wide(&[
             d("pid", 0),
@@ -2915,12 +1852,7 @@ pub const EVENTS: &[Ev] = &[
             d("param.empty", 11),
             d("param.empty", 12),
         ]),
-    // Fast: pid, sched_priority
-    // Wide: pid, tid, policy, sched_priority, sched_curpriority, param.ss_low_priority, param.ss_max_repl, param.ss_repl_period.tv_sec (64), param.ss_repl_period.tv_nsec (64), param.ss_init_budget.tv_sec (64), param.ss_init_budget.tv_nsec (64)
-    // Call: SchedSet
-    ev("KER_CALL", "SCHED_SET")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_SET_64)
         .fast(&[d("pid", 0), d("sched_priority", 1)])
         .wide(&[
             d("pid", 0),
@@ -2935,59 +1867,35 @@ pub const EVENTS: &[Ev] = &[
             e("param.__ss_init_budget.tv_sec", 11),
             e("param.__ss_init_budget.tv_nsec", 13),
         ]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SchedSet
-    ev("KER_CALL", "SCHED_SET")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_SET)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SCHED_SET")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_SET_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: empty, empty
-    // Wide: empty, empty
-    // Call: SchedYield
-    ev("KER_CALL", "SCHED_YIELD")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_SET).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_SET_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_YIELD)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "SCHED_YIELD")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_YIELD_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SchedYield
-    ev("KER_CALL", "SCHED_YIELD")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_YIELD)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SCHED_YIELD")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_YIELD_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: pid, policy
-    // Wide: pid, policy
-    // Call: SchedInfo
-    ev("KER_CALL", "SCHED_INFO")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_YIELD).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_YIELD_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_INFO)
         .fast(&[d("pid", 0), d("policy", 1)])
         .wide(&[d("pid", 0), d("policy", 1)]),
-    ev("KER_CALL", "SCHED_INFO")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_INFO_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val, priority_max
-    // Wide: ret_val, priority_min, priority_max, interval_sec, interval_nsec, priority_priv
-    // Call: SchedInfo
-    ev("KER_CALL", "SCHED_INFO")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_INFO)
         .fast(&[d("ret_val", 0), d("priority_max", 1)])
         .wide(&[
             d("ret_val", 0),
@@ -2997,40 +1905,26 @@ pub const EVENTS: &[Ev] = &[
             d("interval_nsec", 4),
             d("priority_priv", 5),
         ]),
-    ev("KER_CALL", "SCHED_INFO")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_INFO_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: cmd, data_p
-    // Wide: cmd, data_p
-    // Call: SchedCtl
-    ev("KER_CALL", "SCHED_CTL").kind("ENTER").fast_silent().wide_silent(),
-    // Fast: N/A
-    // Wide: cmd, data_p (64)
-    // Call: SchedCtl
-    ev("KER_CALL", "SCHED_CTL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_INFO).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_INFO_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_CTL)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_ENTER, kercall::SCHED_CTL_64)
         .fast(&[h("cmd", 0), q("data", 1)])
         .wide(&[h("cmd", 0), q("data", 1)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SchedCtl
-    ev("KER_CALL", "SCHED_CTL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_CTL)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "SCHED_CTL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SCHED_CTL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: rcvid(64), queueid, msgsize, maxmsg, oflag
-    // Wide: rcvid(64), queueid, msgsize, maxmsg, oflag
-    // Call: MsgQueueOpen
-    ev("KER_CALL", "MSG_QUEUE_OPEN")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_CTL).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SCHED_CTL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_OPEN)
         .fast(&[q("rcvid", 0)])
         .wide(&[
             q("rcvid", 0),
@@ -3039,215 +1933,224 @@ pub const EVENTS: &[Ev] = &[
             d("maxmsg", 4),
             d("oflag", 5),
         ]),
-    ev("KER_CALL", "MSG_QUEUE_OPEN")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_OPEN_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val
-    // Wide: ret_val
-    // Call: MsgQueueOpen
-    ev("KER_CALL", "MSG_QUEUE_OPEN")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_OPEN)
         .fast(&[d("ret_val", 0)])
         .wide(&[d("ret_val", 0)]),
-    ev("KER_CALL", "MSG_QUEUE_OPEN")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_OPEN_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: fd, msg[0]
-    // Wide: fr, msg[0], msglen(64), priority
-    // Call: MsgQueueSend
-    ev("KER_CALL", "MSG_QUEUE_SEND")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_OPEN),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_OPEN_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_SEND)
         .fast(&[d("fd", 0), s("msg[0]", 1, 1)])
         .wide(&[d("fd", 0), s("msg[0]", 1, 1), e("msglen", 2), d("priority", 4)]),
-    ev("KER_CALL", "MSG_QUEUE_SEND")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_SEND_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val
-    // Wide: ret_val
-    // Call: MsgQueueSend
-    ev("KER_CALL", "MSG_QUEUE_SEND")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_SEND)
         .fast(&[d("ret_val", 0)])
         .wide(&[d("ret_val", 0)]),
-    ev("KER_CALL", "MSG_QUEUE_SEND")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_SEND_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: fd
-    // Wide: fd, msglen(64), msg(64), priority(64)
-    // Call: MsgQueueReceive
-    ev("KER_CALL", "MSG_QUEUE_RECEIVE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_SEND),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_SEND_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_RECEIVE)
         .fast(&[d("fd", 0)])
         .wide(&[d("fd", 0), e("msglen", 1), q("msg", 3), q("priority", 5)]),
-    ev("KER_CALL", "MSG_QUEUE_RECEIVE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_RECEIVE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: msglen, msg[0], priority
-    // Wide: msglen, msg[0], priority
-    // Call: MsgQueueReceive
-    ev("KER_CALL", "MSG_QUEUE_RECEIVE")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_RECEIVE)
         .fast(&[d("msglen", 0), s("msg[0]", 1, 1)])
         .wide(&[d("msglen", 0), s("msg[0]", 1, 1), d("priority", 2)]),
-    ev("KER_CALL", "MSG_QUEUE_RECEIVE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_RECEIVE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: rcvid(64), queueid
-    // Wide: rcvid(64), queueid
-    // Call: MsgQueueClose
-    ev("KER_CALL", "MSG_QUEUE_CLOSE")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_RECEIVE),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_RECEIVE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_CLOSE)
         .fast(&[q("rcvid", 0)])
         .wide(&[q("rcvid", 0), d("queueid", 2)]),
-    ev("KER_CALL", "MSG_QUEUE_CLOSE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_CLOSE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: ret_val
-    // Wide: ret_val
-    // Call: MsgQueueClose
-    ev("KER_CALL", "MSG_QUEUE_CLOSE")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_CLOSE)
         .fast(&[d("ret_val", 0)])
         .wide(&[d("ret_val", 0)]),
-    ev("KER_CALL", "MSG_QUEUE_CLOSE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_CLOSE_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: (_NTO_MQCTL_NOTIFY): fd, cmd / (_NTO_MQCTL_SETATTR): fd, cmd / (Other): fd, cmd
-    // Wide: (_NTO_MQCTL_NOTIFY): fd, cmd, sigev_notify, empty, sigev_notify_function(64), sigev_value(64), sigev_notify_attributes(64) / (_NTO_MQCTL_SETATTR): fd, cmd, mq_maxmsg(64), mq_msgsize(64), mq_flags(64), mq_curmsgs(64), mq_sendwait(64), mq_recvwait(64) / (Other): fd, cmd
-    // Call: MsgQueueCtl
-    ev("KER_CALL", "MSG_QUEUE_CTL")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_CLOSE),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_CLOSE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_CTL)
         .fast(&[d("fd", 0), d("cmd", 1)])
         .wide(&[d("fd", 0), d("cmd", 1)]),
-    ev("KER_CALL", "MSG_QUEUE_CTL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::MSG_QUEUE_CTL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: (_NTO_MQCTL_GETATTR): ret_val, cmd / (Other): ret_val, cmd
-    // Wide: (_NTO_MQCTL_GETATTR): ret_val, cmd, mq_maxmsg(64), mq_msgsize(64), mq_flags(64), mq_curmsgs(64), mq_sendwait(64), mq_recvwait(64) / (Other): ret_val, cmd
-    // Call: mq_unlink, mq_notify, mq_setaddr, mq_getaddr
-    ev("KER_CALL", "MSG_QUEUE_CTL")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_CTL)
         .fast(&[d("ret_val", 0), d("cmd", 1)])
         .wide(&[d("ret_val", 0), d("cmd", 1)]),
-    ev("KER_CALL", "MSG_QUEUE_CTL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::MSG_QUEUE_CTL_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "PIPE_OPEN").kind("ENTER").fast_silent().wide_silent(),
-    ev("KER_CALL", "PIPE_OPEN")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_CTL),
+    ev(ClassId::KER_CALL_INT, kercall::MSG_QUEUE_CTL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::PIPE_OPEN)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "PIPE_OPEN").kind("EXIT").fast_silent().wide_silent(),
-    ev("KER_CALL", "PIPE_OPEN")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::PIPE_OPEN_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "PIPE_CTL").kind("ENTER").fast_silent().wide_silent(),
-    ev("KER_CALL", "PIPE_CTL")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::PIPE_OPEN)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "PIPE_CTL").kind("EXIT").fast_silent().wide_silent(),
-    ev("KER_CALL", "PIPE_CTL")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::PIPE_OPEN_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "PIPE_CLOSE").kind("ENTER").fast_silent().wide_silent(),
-    ev("KER_CALL", "PIPE_CLOSE")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_INT, kercall::PIPE_OPEN),
+    ev(ClassId::KER_CALL_INT, kercall::PIPE_OPEN_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::PIPE_CTL)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "PIPE_CLOSE").kind("EXIT").fast_silent().wide_silent(),
-    ev("KER_CALL", "PIPE_CLOSE")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::PIPE_CTL_64)
         .fast_silent()
         .wide_silent(),
-    // Fast: sync_p, owner
-    // Wide: sync_p, count, owner
-    // Call: SyncTypeDestroy
-    ev("KER_CALL", "SYNC_TYPE_DESTROY")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_EXIT, kercall::PIPE_CTL)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_EXIT, kercall::PIPE_CTL_64)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_INT, kercall::PIPE_CTL),
+    ev(ClassId::KER_CALL_INT, kercall::PIPE_CTL_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::PIPE_CLOSE)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_ENTER, kercall::PIPE_CLOSE_64)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_EXIT, kercall::PIPE_CLOSE)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_EXIT, kercall::PIPE_CLOSE_64)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_INT, kercall::PIPE_CLOSE),
+    ev(ClassId::KER_CALL_INT, kercall::PIPE_CLOSE_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_TYPE_DESTROY)
         .fast(&[h("sync_p", 0), d("owner", 1)])
         .wide(&[h("sync_p", 0), d("count", 1), d("owner", 2), d("type", 3)]),
-    // Fast: sync_p (64)
-    // Wide: sync_p (64), count, owner
-    // Call: SyncTypeDestroy
-    ev("KER_CALL", "SYNC_TYPE_DESTROY")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_ENTER, kercall::SYNC_TYPE_DESTROY_64)
         .fast(&[q("sync_p", 0)])
         .wide(&[q("sync_p", 0), d("count", 2), d("owner", 3), d("type", 4)]),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    // Call: SyncTypeDestroy
-    ev("KER_CALL", "SYNC_TYPE_DESTROY")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_TYPE_DESTROY)
         .fast(&[d("ret_val", 0), h("empty", 1)])
         .wide(&[d("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "SYNC_TYPE_DESTROY")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::SYNC_TYPE_DESTROY_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "TEST").kind("ENTER").fast_silent().wide_silent(),
-    ev("KER_CALL", "TEST").kind("ENTER").is64().fast_silent().wide_silent(),
-    ev("KER_CALL", "TEST").kind("EXIT").fast_silent().wide_silent(),
-    ev("KER_CALL", "TEST").kind("EXIT").is64().fast_silent().wide_silent(),
-    ev("KER_CALL", "SYS_CUSTOM").kind("ENTER").fast_silent().wide_silent(),
-    ev("KER_CALL", "SYS_CUSTOM")
-        .kind("ENTER")
-        .is64()
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_TYPE_DESTROY).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::SYNC_TYPE_DESTROY_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::TEST).fast_silent().wide_silent(),
+    ev(ClassId::KER_CALL_ENTER, kercall::TEST_64)
         .fast_silent()
         .wide_silent(),
-    ev("KER_CALL", "SYS_CUSTOM").kind("EXIT").fast_silent().wide_silent(),
-    ev("KER_CALL", "SYS_CUSTOM")
-        .kind("EXIT")
-        .is64()
+    ev(ClassId::KER_CALL_EXIT, kercall::TEST).fast_silent().wide_silent(),
+    ev(ClassId::KER_CALL_EXIT, kercall::TEST_64).fast_silent().wide_silent(),
+    ev(ClassId::KER_CALL_INT, kercall::TEST),
+    ev(ClassId::KER_CALL_INT, kercall::TEST_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::SYS_CUSTOM)
         .fast_silent()
         .wide_silent(),
-    // Fast: empty, empty
-    // Wide: empty, empty
-    ev("KER_CALL", "BAD")
-        .kind("ENTER")
+    ev(ClassId::KER_CALL_ENTER, kercall::SYS_CUSTOM_64)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_EXIT, kercall::SYS_CUSTOM)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_EXIT, kercall::SYS_CUSTOM_64)
+        .fast_silent()
+        .wide_silent(),
+    ev(ClassId::KER_CALL_INT, kercall::SYS_CUSTOM),
+    ev(ClassId::KER_CALL_INT, kercall::SYS_CUSTOM_64),
+    ev(ClassId::KER_CALL_ENTER, kercall::BAD)
         .fast(&[h("empty", 0), h("empty", 1)])
         .wide(&[h("empty", 0), h("empty", 1)]),
-    ev("KER_CALL", "BAD").kind("ENTER").is64().fast_silent().wide_silent(),
-    // Fast: ret_val, empty
-    // Wide: ret_val, empty
-    ev("KER_CALL", "BAD")
-        .kind("EXIT")
+    ev(ClassId::KER_CALL_ENTER, kercall::BAD_64).fast_silent().wide_silent(),
+    ev(ClassId::KER_CALL_EXIT, kercall::BAD)
         .fast(&[h("ret_val", 0), h("empty", 1)])
         .wide(&[h("ret_val", 0), h("empty", 1)]),
-    ev("KER_CALL", "BAD").kind("EXIT").is64().fast_silent().wide_silent(),
-    ev("SYSTEM", "RESERVED").wide_silent(),
-    ev("SYSTEM", "APS_NAME").wide(&[d("partition_id", 0), sz("name", 1)]),
-    ev("SYSTEM", "APS_BUDGETS").wide(&[
+    ev(ClassId::KER_CALL_EXIT, kercall::BAD_64).fast_silent().wide_silent(),
+    ev(ClassId::KER_CALL_INT, kercall::BAD).intcall(),
+    ev(ClassId::KER_CALL_INT, kercall::BAD_64),
+    // ---- INT
+    ev(ClassId::INT, int::DELIVER)
+        .name("INT_DELIVER")
+        .args(&[t("intr_id:0x{x0}({u0})")]),
+    // ---- THREAD(スレッドの状態は PR_TH の PR_TH_PROCESS_BASE より小さい番号)
+    ev(ClassId::THREAD, thread::DEAD).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::RUNNING).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::READY).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::STOPPED).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::SEND).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::RECEIVE).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::REPLY).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::MQ_SEND).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::MQ_RECEIVE).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::WAITPAGE).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::SIGSUSPEND).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::SIGWAITINFO).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::NANOSLEEP).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::MUTEX).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::CONDVAR).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::JOIN).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::INTR).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::SEM).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::WAITCTX).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::RWLOCK_READ).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::RWLOCK_WRITE).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::BARRIER).name("unknown").args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::PIPE).name("unknown").args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::CREATE).args(&[d("pid", 0), d("tid", 1), d("policy", 2)]),
+    ev(ClassId::THREAD, thread::DESTROY).args(&[d("pid", 0), d("tid", 1)]),
+    ev(ClassId::THREAD, thread::MUON_MUTEX).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::TRACEBUFFER).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::INTR_ATTACH_EV).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::TIMER_DELEGATE).args(THREAD_BODY),
+    ev(ClassId::THREAD, thread::CREATE_VT).name("THCREATE_VT"),
+    ev(ClassId::THREAD, thread::DESTROY_VT).name("THDESTROY_VT"),
+    any(ClassId::THREAD)
+        .max_code(THREAD_MAX_PRINTED)
+        .name("unknown")
+        .args(THREAD_BODY),
+    // ---- PROCESS
+    ev(ClassId::PROCESS, process::CREATE_P)
+        .name("PROCCREATE")
+        .args(&[d("ppid", 0), d("pid", 1)]),
+    ev(ClassId::PROCESS, process::DESTROY_P)
+        .name("PROCDESTROY")
+        .args(&[d("ppid", 0), d("pid", 1)]),
+    ev(ClassId::PROCESS, process::CREATE_P_NAME)
+        .name("PROCCREATE_NAME")
+        .args(&[d("ppid", 0), d("pid", 1), sz("name", 2)]),
+    ev(ClassId::PROCESS, process::DESTROY_P_NAME)
+        .name("PROCDESTROY_NAME")
+        .args(&[d("ppid", 0), d("pid", 1), sz("name", 2)]),
+    ev(ClassId::PROCESS, process::NAME_T)
+        .name("PROCTHREAD_NAME")
+        .args(&[d("pid", 0), d("tid", 1), sz("name", 2)]),
+    // ---- SYSTEM
+    ev(ClassId::SYSTEM, system::RESERVED).name("").wide_silent(),
+    ev(ClassId::SYSTEM, system::PATHMGR)
+        .name("PATHMGR_OPEN")
+        .wide(&[d("pid", 0), d("tid", 1), sz("path", 2)]),
+    ev(ClassId::SYSTEM, system::APS_NAME).wide(&[d("partition_id", 0), sz("name", 1)]),
+    ev(ClassId::SYSTEM, system::APS_BUDGETS).name("APS_NEW_BUDGET").wide(&[
         d("partition_id", 0),
         d("min_percentage_budget", 1),
         d("critical_budget", 2),
@@ -3255,11 +2158,12 @@ pub const EVENTS: &[Ev] = &[
         d("critical_priority", 4),
         d("budget_percent_scale", 5),
     ]),
-    ev("SYSTEM", "APS_BNKR").wide(&[d("pid", 0), d("tid", 1), d("partition_id", 2)]),
-    // Fast: pid, addr (64), len (64), flags
-    // Wide: pid, addr (64), len (64), flags, prot, fd, align (64), offset (64), name
-    // Call: mmap/mmap64
-    ev("SYSTEM", "MMAP").wide(&[
+    ev(ClassId::SYSTEM, system::APS_BNKR).name("APS_BANKRUPTCY").wide(&[
+        d("pid", 0),
+        d("tid", 1),
+        d("partition_id", 2),
+    ]),
+    ev(ClassId::SYSTEM, system::MMAP).wide(&[
         d("pid", 0),
         q("vaddr", 1),
         q("len", 3),
@@ -3270,44 +2174,49 @@ pub const EVENTS: &[Ev] = &[
         q("offset", 10),
         sz("path", 12),
     ]),
-    // Fast: pid, addr (64), len (64)
-    // Wide: pid, addr (64), len (64)
-    // Call: munmap
-    ev("SYSTEM", "MUNMAP").wide(&[d("pid", 0), q("vaddr", 1), q("len", 3)]),
-    // Fast: pc_addr(32), <null>
-    // Wide: pc_addr(32), <null>
-    // Call: whenever a breakpoint is hit
-    ev("SYSTEM", "ADDRESS").wide_silent(),
-    // Fast: thisfn(32), call_site(32)
-    // Wide: thisfn(32), call_site(32)
-    // Call: whenever a function is entered (and it is instrumented)
-    ev("SYSTEM", "FUNC_ENTER").wide(&[h("thisfn", 0), h("call_site", 1)]),
-    // Fast: thisfn(32), call_site(32)
-    // Wide: thisfn(32), call_site(32)
-    // Call: whenever a function is exited (and it is instrumented)
-    ev("SYSTEM", "FUNC_EXIT").wide(&[h("thisfn", 0), h("call_site", 1)]),
-    ev("SYSTEM", "DEFRAG_START").wide(&[d("block_size", 0)]),
-    // Fast: bitset(32) 0x1 - CPU is on/offline, 0x2 - CPU manually requested on/offline, 0x4 CPU is dynamically offline-able or not, 0x8 system is in runstate burst mode
-    // Wide: same as above
-    // Call: when the runstate for a CPU changes
-    ev("SYSTEM", "RUNSTATE").wide(&[h("bitset", 0)]),
-    // Fast: rc(32), freemem(32), maxblock(32)
-    // Wide: rc(32), freemem(32), maxblock(32)
-    // Call: on completion of the defragmentation process (whether successful or not)
-    ev("SYSTEM", "DEFRAG_END").wide(&[d("result", 0), d("freemem", 1), d("maxblock", 2)]),
-    ev("SYSTEM", "APS_PSTATS").wide(&[
+    ev(ClassId::SYSTEM, system::MUNMAP).wide(&[d("pid", 0), q("vaddr", 1), q("len", 3)]),
+    ev(ClassId::SYSTEM, system::MAPNAME).wide(&[d("pid", 0), h("vaddr", 1), h("len", 2), sz("name", 3)]),
+    ev(ClassId::SYSTEM, system::ADDRESS).wide_silent(),
+    ev(ClassId::SYSTEM, system::ADDRESS_64).wide(&[q("addr", 0)]),
+    ev(ClassId::SYSTEM, system::FUNC_ENTER).wide(&[h("thisfn", 0), h("call_site", 1)]),
+    ev(ClassId::SYSTEM, system::FUNC_ENTER_64).wide(&[q("thisfn", 0), q("call_site", 2)]),
+    ev(ClassId::SYSTEM, system::FUNC_EXIT).wide(&[h("thisfn", 0), h("call_site", 1)]),
+    ev(ClassId::SYSTEM, system::FUNC_EXIT_64).wide(&[q("thisfn", 0), q("call_site", 2)]),
+    ev(ClassId::SYSTEM, system::SLOG).wide(&[d("opcode", 0), d("severity", 1), sz("message", 2)]),
+    ev(ClassId::SYSTEM, system::DEFRAG_START).wide(&[d("block_size", 0)]),
+    ev(ClassId::SYSTEM, system::RUNSTATE).wide(&[h("bitset", 0)]),
+    ev(ClassId::SYSTEM, system::POWER).args(&[t(" bitset:0x{x0:08}\t actual frequency:{u1} cpu:{u0&0xffff}")]),
+    ev(ClassId::SYSTEM, system::IPI).args_silent(),
+    ev(ClassId::SYSTEM, system::IPI_64)
+        .name("IPI_64")
+        .args(&[t(" ipicmd = {x0:#08}, "), flags(0, "ipi_cmd", " {name}")]),
+    ev(ClassId::SYSTEM, system::PAGEWAIT).args(&[
+        t(" pid:{d0} tid:{d1} ip:0x{x2:08} vaddr:0x{x3:08} type:{x4:04} --- flags:0x{x5:08} offset:0x{q6:016}"),
+        t(" name:{z8:6}").when("words >= 9"),
+    ]),
+    ev(ClassId::SYSTEM, system::TIMER).args(&[
+        t(" pid:{d0} tid:{d1} timer_id:{d2} flags:0x{x3:08}"),
+        flags(3, "timer_flags", " {name}"),
+    ]),
+    ev(ClassId::SYSTEM, system::DEFRAG_END).wide(&[d("result", 0), d("freemem", 1), d("maxblock", 2)]),
+    ev(ClassId::SYSTEM, system::PROFILE).args(&[t(" ip = 0x{x0:08}, tid = 0x{x1:08}, pid = 0x{x2:08}")]),
+    ev(ClassId::SYSTEM, system::PROFILE_64)
+        .name("PROFILE_64")
+        .args(&[t(" ip = 0x{q0:016}, tid = 0x{x2:08}, pid = 0x{x3:08}")]),
+    ev(ClassId::SYSTEM, system::MAPNAME_64).wide(&[d("pid", 0), q("vaddr", 1), e("len", 3), sz("name", 5)]),
+    ev(ClassId::SYSTEM, system::APS_PSTATS).wide(&[
         d("id", 0),
         d("stats_flags", 1),
         e("run_time_cycles", 2),
         e("critical_time_cycles", 4),
         e("dynamic_windowsize_cycles", 6),
     ]),
-    ev("SYSTEM", "APS_OSTATS").wide(&[
+    ev(ClassId::SYSTEM, system::APS_OSTATS).wide(&[
         d("pid_at_last_bankruptcy", 0),
         d("tid_at_last_bankruptcy", 1),
         d("id_at_last_bankruptcy", 2),
     ]),
-    ev("SYSTEM", "APS_INFO").wide(&[
+    ev(ClassId::SYSTEM, system::APS_INFO).wide(&[
         d("windowsize_ms", 0),
         d("scheduling_policy_flags", 1),
         d("sec_flags", 2),
@@ -3316,72 +2225,128 @@ pub const EVENTS: &[Ev] = &[
         d("max_partitions", 5),
         e("cycles_per_ms", 6),
     ]),
-    ev("SYSTEM", "APS_JOIN").wide(&[d("id", 0), d("pid", 1), d("tid", 2), d("aid", 3)]),
-    ev("SYSTEM", "APS_THREAD").wide(&[
+    ev(ClassId::SYSTEM, system::APS_JOIN).wide(&[d("id", 0), d("pid", 1), d("tid", 2), d("aid", 3)]),
+    ev(ClassId::SYSTEM, system::APS_THREAD).wide(&[
         d("pid", 0),
         d("tid", 1),
         d("id", 2),
         d("inherited_id", 3),
         d("crit_state_flags", 4),
     ]),
-    ev("SYSTEM", "APS_PROCESS").wide(&[d("pid", 0), d("id", 1)]),
-    // Fast: old low latency priority, old migrate priority, new low latency priority, new migrate priority
-    // Wide: same as above
-    // Call: SchedCtl with SCHED_CONFIGURE
-    ev("SYSTEM", "SCHED_CONF").wide_silent(),
-    ev("SYSTEM", "PCTRACE").wide_silent(),
-    // Fast: pc_addr(64)
-    // Wide: pc_addr(64)
-    // Call: if enabled via _NTO_TRACE_SYS_ADDRESS_64, whenever a breakpoint is hit; if enabled via _NTO_TRACE_SYS_PCTRACE, whenever a context switch occurs
-    ev("SYSTEM", "ADDRESS").is64().wide(&[q("addr", 0)]),
-    // Fast: thisfn(64), call_site(64)
-    // Wide: thisfn(64), call_site(64)
-    // Call: whenever a function is entered (and it is instrumented)
-    ev("SYSTEM", "FUNC_ENTER")
-        .is64()
-        .wide(&[q("thisfn", 0), q("call_site", 2)]),
-    // Fast: thisfn(64), call_site(64)
-    // Wide: thisfn(64), call_site(64)
-    // Call: whenever a function is exited (and it is instrumented)
-    ev("SYSTEM", "FUNC_EXIT")
-        .is64()
-        .wide(&[q("thisfn", 0), q("call_site", 2)]),
-    // Fast: guest_ip(64)
-    // Wide: guest_ip(64)
-    // Call: Before a virtual CPU thread attempts executing a guest.
-    ev("QVM", "GUEST_ENTER").wide(&[q("guest_ip", 0)]),
-    // Fast: status(32), hw_reason(32), clockcycles_offset(64), guest_ip(64), payload(64)
-    // Wide: status(32), hw_reason(32), clockcycles_offset(64), guest_ip(64), payload(64)
-    // Call: After a virtual CPU thread has attempted executing a guest.
-    ev("QVM", "GUEST_EXIT").wide(&[
+    ev(ClassId::SYSTEM, system::APS_PROCESS).wide(&[d("pid", 0), d("id", 1)]),
+    ev(ClassId::SYSTEM, system::SCHED_CONF).wide_silent(),
+    ev(ClassId::SYSTEM, system::IST_ATTACH).min_words(6).args(&[
+        t("pid:{d0} tid:{d1} intr_id:0x{x2}({u2})"),
+        t(" intr_cpu:{d3:02}").when("u3 != 0xffffffff"),
+        t(" flags:0x{x4:08}"),
+        t(" EVENT").when("u4 & 0x10000000"),
+        t(" ist_prio:{d5}"),
+    ]),
+    ev(ClassId::SYSTEM, system::IST_DETACH).min_words(6).args(&[
+        t("pid:{d0} tid:{d1} intr_id:0x{x2}({u2})"),
+        t(" intr_cpu:{d3:02}").when("u3 != 0xffffffff"),
+        t(" flags:0x{x4:08}"),
+        t(" EVENT").when("u4 & 0x10000000"),
+        t(" ist_prio:{d5}"),
+    ]),
+    ev(ClassId::SYSTEM, system::PCTRACE).wide_silent(),
+    // ---- USER(番号は任意)
+    any(ClassId::USER).name("EVENT:{code}").args(&[dump()]),
+    // ---- COMM
+    ev(ClassId::COMM, comm::SMSG)
+        .name("SND_MESSAGE")
+        .args(&[h("rcvid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::SPULSE)
+        .name("SND_PULSE")
+        .args(&[h("scoid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::RMSG)
+        .name("REC_MESSAGE")
+        .args(&[h("rcvid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::RPULSE)
+        .name("REC_PULSE")
+        .args(&[h("scoid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::SPULSE_EXE)
+        .name("SND_PULSE_EXE")
+        .args(&[h("scoid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::SPULSE_DIS)
+        .name("SND_PULSE_DIS")
+        .args(&[h("scoid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::SPULSE_DEA)
+        .name("SND_PULSE_DEA")
+        .args(&[h("scoid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::SPULSE_UN)
+        .name("SND_PULSE_UN")
+        .args(&[h("scoid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::SPULSE_QUN)
+        .name("SND_PULSE_QUN")
+        .args(&[h("scoid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::SIGNAL).args(&[
+        d("si_signo", 0),
+        d("si_code", 1),
+        d("si_errno", 2),
+        h("__pad[0]", 3),
+        h("__pad[1]", 4),
+        h("__pad[2]", 5),
+        h("__pad[3]", 6),
+        h("__pad[4]", 7),
+        h("__pad[5]", 8),
+    ]),
+    ev(ClassId::COMM, comm::REPLY)
+        .name("REPLY_MESSAGE")
+        .args(&[d("tid", 0), d("pid", 1)]),
+    ev(ClassId::COMM, comm::ERROR)
+        .name("MSG_ERROR")
+        .args(&[d("tid", 0), d("pid", 1)]),
+    // ---- QUIP(番号は任意)
+    any(ClassId::QUIP).name("EVENT:{code}").args(&[dump()]),
+    // ---- SEC
+    ev(ClassId::SEC, sec::ABLE).args(&[
+        t(" pid:{d0} able:{u1} ({enum:sec_able:u1:UNKNOWN})"),
+        t(" start:0x{q4:016}").when("words >= 6"),
+        t(" end:0x{q6:016}").when("words >= 8"),
+        t(" ALLOW").when("words >= 4 && u2 & 0x1"),
+        t(" DENY").when("words >= 4 && u2 & 0x1 == 0"),
+        t(" as root").when("words >= 4 && u2 & 0x2"),
+        t(" as non-root").when("words >= 4 && u2 & 0x2 == 0"),
+        t(" TRUNC").when("words < 8"),
+    ]),
+    ev(ClassId::SEC, sec::ABLE_LOOKUP).args(&[t(" name:{r1} able:{u0}")]),
+    ev(ClassId::SEC, sec::PATH_ATTACH).args(&[
+        t(" pid:{d0} ptype:{u1}"),
+        t(" TRUNC").when("words < 4"),
+        t(" ctype:{d2} chid:{d3} status:{enum:sec_path_status:u4:UNKNOWN}").when("words >= 4"),
+        t(" TRUNC").when("words >= 4 && words < 6"),
+        t(" path:{r5}").when("words >= 6"),
+    ]),
+    ev(ClassId::SEC, sec::QNET_CONNECT).name("unknown(3)").args(&[]),
+    ev(ClassId::SEC, sec::PERM_LOOKUP).args(&[t(" pid:{d0} class:{r4} ({d2}) perm:{rnext} ({d3}) errno:{d1}")]),
+    ev(ClassId::SEC, sec::PERM_TEST).args(&[
+        t(" pid:{d0} ptype:{u1} otype:{u2} class:{d3} perm:{d4} errno:{u5}").when("words >= 6"),
+        t(" pid:{d0} ptype:{u1} TRUNC").when("words < 6"),
+    ]),
+    ev(ClassId::SEC, sec::UNREG_EVENT).args(&[
+        t(" src pid:{d0} dst:{r4} (pid:{d1} tid:{u2}) denied:{u3}").when("words >= 6"),
+        t(" TRUNC").when("words < 6"),
+    ]),
+    ev(ClassId::SEC, sec::OPEN_EVENT).name("unknown(7)").args(&[]),
+    any(ClassId::SEC).name("unknown({code})").args(&[]),
+    // ---- QVM
+    ev(ClassId::QVM, qvm::GUEST_ENTER).wide(&[q("guest_ip", 0)]),
+    ev(ClassId::QVM, qvm::GUEST_EXIT).wide(&[
         h("status", 0),
         h("hw_reason", 1),
         q("clockcycles_offset", 2),
         q("guest_ip", 4),
         q("payload", 6),
     ]),
-    // Fast: vcpu_id(32)
-    // Wide: vcpu_id(32)
-    // Call: When qvm creates a thread to encapsulate a guest's virtual CPU.
-    ev("QVM", "CREATE_VCPU_THREAD").wide(&[d("vcpu_id", 0)]),
-    // Fast: vcpu_id(32), intr_vector(32)
-    // Wide: vcpu_id(32), intr_vector(32)
-    // Call: When a virtual device tries to signal an interrupt.
-    ev("QVM", "RAISE_INTR").wide(&[d("vcpu_id", 0), h("intr_vector", 1)]),
-    // Fast: vcpu_id(32), intr_vector(32)
-    // Wide: vcpu_id(32), intr_vector(32)
-    // Call: When an interrupt is de-asserted for any reason.
-    ev("QVM", "LOWER_INTR").wide(&[d("vcpu_id", 0), h("intr_vector", 1)]),
-    // Fast: timer_id(32), vcpu_id(32)
-    // Wide: timer_id(32), vcpu_id(32)
-    // Call: When a virtual device creates a timer.
-    ev("QVM", "TIMER_CREATE").wide(&[h("timer_id", 0), d("vcpu_id", 1)]),
-    // Fast: timer_id(32)
-    // Wide: timer_id(32)
-    // Call: When the hypervisor invokes a virtual device's callback for a timer.
-    ev("QVM", "TIMER_FIRE").wide(&[h("timer_id", 0)]),
-    // Fast: at_entry(64), at_exit(64)
-    // Wide: at_entry(64), at_exit(64)
-    // Call: When a guest has successfully executed for a period of time.
-    ev("QVM", "CYCLES").wide(&[q("at_entry", 0), q("at_exit", 2)]),
+    ev(ClassId::QVM, qvm::CREATE_VCPU_THREAD).wide(&[d("vcpu_id", 0)]),
+    ev(ClassId::QVM, qvm::RAISE_INTR)
+        .name("INTR_RAISE")
+        .wide(&[d("vcpu_id", 0), h("intr_vector", 1)]),
+    ev(ClassId::QVM, qvm::LOWER_INTR)
+        .name("INTR_LOWER")
+        .wide(&[d("vcpu_id", 0), h("intr_vector", 1)]),
+    ev(ClassId::QVM, qvm::TIMER_CREATE).wide(&[h("timer_id", 0), d("vcpu_id", 1)]),
+    ev(ClassId::QVM, qvm::TIMER_FIRE).wide(&[h("timer_id", 0)]),
+    ev(ClassId::QVM, qvm::CYCLES).wide(&[q("at_entry", 0), q("at_exit", 2)]),
 ];

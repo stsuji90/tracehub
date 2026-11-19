@@ -52,20 +52,23 @@ args.rs は traceprinter の表示の定義で、前の版のものを出発点�
 | 定義 | 確かめ方 |
 |---|---|
 | `BANNER`(traceprinter のバージョンの行) | traceprinter の出力の先頭 2 行 |
-| `EVENT_NAMES`・`EVENT_NAMES_64`・`KERCALL_NAMES*`(def.rs の名前と違う表示名) | 合成データの比較(§5)で名前の違う行を探す |
-| `INT_CALLS`(int の 64 ビットでない版を INT_CALL の形で出すコール) | 同上 |
-| `EVENTS`(イベントごとの書式) | 新しいイベント・引数の変わったイベント。下の 4.2 |
-| `THREAD_MAX_PRINTED`・`THREAD_HIDDEN` | スレッドの状態の追加 |
+| `EVENTS`(セマンティック ID ごとの書式・表示名・INT_CALL の形) | 新しいイベント・引数の変わったイベント。下の 4.2 |
+| `KERCALL_NAMES*`(def.rs の名前と違うカーネルコールの表示名) | 合成データの比較(§5)で名前の違う行を探す |
+| `THREAD_MAX_PRINTED` | スレッドの状態の追加 |
 | `COMBINE_WINDOW`・診断の行(`DIAG_*`) | 組の異常の場面の比較(§5) |
 
 ### 4.2 イベントの書式の下書き(TableOfEvents から)
 
-TableOfEvents のブロック(`Class:`・`Event:`・`Fast:`・`Wide:`)を、`ev(内部クラス名, 内部イベント名)` の書式に移す。
+TableOfEvents のブロック(`Class:`・`Event:`・`Fast:`・`Wide:`)を、`ev(クラス ID, イベント ID)` の書式に移す。
+EVENTS はセマンティック ID のすべてを 1 行ずつ持つ(足りない・余分な行は試験 `args_rows_cover_all_semantic_ids` が見つける)。
+traceprinter が行を出さないイベントも、書式の無い行 `ev(クラス ID, イベント ID),` として置く。
 
 | TableOfEvents | args.rs |
 |---|---|
-| `Class: _NTO_TRACE_KERCALLENTER` / `EXIT` / `INT` | `ev("KER_CALL", 名前).kind("ENTER")` / `"EXIT"` / `"INT"` |
-| `Event: __KER_X\|_NTO_TRACE_KERCALL64` | `.is64()` |
+| `Class: _NTO_TRACE_KERCALLENTER` / `EXIT` / `INT` | `ev(ClassId::KER_CALL_ENTER, kercall::名前)` / `KER_CALL_EXIT` / `KER_CALL_INT` |
+| `Event: __KER_X\|_NTO_TRACE_KERCALL64` | `kercall::名前_64` |
+| def.rs の名前と違う表示名 | `.name("表示名")` |
+| 引数の無い INT_CALL の形 | `.intcall()` |
 | `Fast:` | `.fast(&[...])`(S と、CB だけの組) |
 | `Wide:` | `.wide(&[...])`(組)。Fast と同じなら `.args(&[...])` |
 | `Fast: N/A` | `.fast_silent()` |
@@ -91,7 +94,7 @@ python tests/kev/tools/compare.py --traceprinter <traceprinter の場所>
 
 | 違い | 直す所 |
 |---|---|
-| イベント名が違う | `EVENT_NAMES`・`KERCALL_NAMES*` |
+| イベント名が違う | EVENTS の `.name(...)`・`KERCALL_NAMES*` |
 | 引数のラベル・16 進 / 10 進・並び | `EVENTS` の書式 |
 | traceprinter は行を出さない | `.fast_silent()` / `.wide_silent()` / `.min_words(n)`、`THREAD_MAX_PRINTED` |
 | 語が足りないときだけ違う | `.when("words >= n")` |

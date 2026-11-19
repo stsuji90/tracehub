@@ -64,45 +64,7 @@ pub(crate) const DEFINED_CLASSES: &[u8] = &[
 
 /// セマンティックなクラス ID → traceprinter の表示クラス名
 pub(crate) fn class_display(class: ClassId) -> Option<&'static str> {
-    let by_internal = |c: u8| {
-        args::CLASS_DISPLAY
-            .iter()
-            .find(|r| class_code(r.0) == Some(c))
-            .map(|r| r.1)
-    };
-    match class {
-        ClassId::KER_CALL_ENTER => Some(args::DISPLAY_KER_ENTER),
-        ClassId::KER_CALL_EXIT => Some(args::DISPLAY_KER_EXIT),
-        ClassId::KER_CALL_INT => Some(args::DISPLAY_KER_INT),
-        ClassId::THREAD => Some(args::DISPLAY_THREAD),
-        ClassId::PROCESS => Some(args::DISPLAY_PROCESS),
-        ClassId::CONTROL => by_internal(def::CLASS_CONTROL),
-        ClassId::INT => by_internal(def::CLASS_INT),
-        ClassId::SYSTEM => by_internal(def::CLASS_SYSTEM),
-        ClassId::USER => by_internal(def::CLASS_USER),
-        ClassId::COMM => by_internal(def::CLASS_COMM),
-        ClassId::QUIP => by_internal(def::CLASS_QUIP),
-        ClassId::SEC => by_internal(def::CLASS_SEC),
-        ClassId::QVM => by_internal(def::CLASS_QVM),
-        _ => None,
-    }
-}
-
-/// 内部クラス名(def.rs の CLASS_* の名前)→ 内部クラス ID
-pub(crate) fn class_code(name: &str) -> Option<u8> {
-    Some(match name {
-        "CONTROL" => def::CLASS_CONTROL,
-        "KER_CALL" => def::CLASS_KER_CALL,
-        "INT" => def::CLASS_INT,
-        "PR_TH" => def::CLASS_PR_TH,
-        "SYSTEM" => def::CLASS_SYSTEM,
-        "USER" => def::CLASS_USER,
-        "COMM" => def::CLASS_COMM,
-        "QUIP" => def::CLASS_QUIP,
-        "SEC" => def::CLASS_SEC,
-        "QVM" => def::CLASS_QVM,
-        _ => return None,
-    })
+    args::CLASS_DISPLAY.iter().find(|r| r.0 == class).map(|r| r.1)
 }
 
 /// 内部クラス ID → (内部イベント番号, 名前, セマンティック ID) の表(KER_CALL・USER・QUIP 以外)
@@ -123,33 +85,6 @@ fn event_table_64(class: u8) -> &'static [(u16, &'static str, EventId)] {
     match class {
         def::CLASS_SYSTEM => def::SYSTEM_EVENTS_64,
         _ => &[],
-    }
-}
-
-/// 内部クラス名と内部イベント名から内部イベント番号を引く(KER_CALL は種別と 64 ビット版も)
-pub(crate) fn event_code(class: u8, name: &str, kind: &str, is64: bool) -> Option<u16> {
-    let bit64 = if is64 { def::BIT64 } else { 0 };
-    match class {
-        def::CLASS_KER_CALL => {
-            let num = def::KERCALLS.iter().find(|(_, n, _)| *n == name)?.0;
-            let k = match kind {
-                "ENTER" => 0,
-                "EXIT" => def::KERCALL_EXIT,
-                "INT" => def::KERCALL_INT,
-                _ => return None,
-            };
-            Some(num | k | bit64)
-        }
-        def::CLASS_PR_TH => def::PR_TH_PROCESS
-            .iter()
-            .chain(def::PR_TH_VTHREAD)
-            .chain(def::THREAD_STATES)
-            .find(|(_, n, _)| *n == name)
-            .map(|r| r.0),
-        _ => event_table(class)
-            .iter()
-            .find(|(_, n, _)| *n == name)
-            .map(|r| r.0 | bit64),
     }
 }
 
@@ -199,6 +134,23 @@ pub(crate) fn semantic_ids(class: u8, code: u16) -> (ClassId, EventId) {
             (cls, e.unwrap_or(EventId::UNKNOWN))
         }
     }
+}
+
+/// セマンティックなクラス ID → 内部クラス ID(KER_CALL の種別、THREAD と PROCESS は同じ内部クラス)
+pub(crate) fn internal_class(class: ClassId) -> Option<u8> {
+    Some(match class {
+        ClassId::CONTROL => def::CLASS_CONTROL,
+        ClassId::KER_CALL_ENTER | ClassId::KER_CALL_EXIT | ClassId::KER_CALL_INT => def::CLASS_KER_CALL,
+        ClassId::INT => def::CLASS_INT,
+        ClassId::THREAD | ClassId::PROCESS => def::CLASS_PR_TH,
+        ClassId::SYSTEM => def::CLASS_SYSTEM,
+        ClassId::USER => def::CLASS_USER,
+        ClassId::COMM => def::CLASS_COMM,
+        ClassId::QUIP => def::CLASS_QUIP,
+        ClassId::SEC => def::CLASS_SEC,
+        ClassId::QVM => def::CLASS_QVM,
+        _ => return None,
+    })
 }
 
 /// セマンティック ID → 内部 ID(semantic_ids の逆)

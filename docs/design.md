@@ -507,7 +507,7 @@ t:0x{timestamp_cycles_low32:08x} CPU:{cpu:02} {class_name:<16}:{event_name:<18}{
 |---|---|---|
 | semantic_id.rs | 手で保守(番号は追加だけ) | セマンティック ID |
 | qnxNNN/def.rs | tests/kev/tools/gen_qnx_def.py で生成(手で編集しない) | header のビット配置、内部クラス ID、CONTROL のイベント番号と payloads の位置、KER_CALL のビット、クラスごとの (内部イベント番号, 名前, セマンティック ID) |
-| qnxNNN/args.rs | AI が作り、traceprinter の出力で確かめる | 出力の枠、診断の行、表示名、書式、出力しない条件 |
+| qnxNNN/args.rs | AI が作り、traceprinter の出力で確かめる | 出力の枠、診断の行、表示名、書式、出力しない条件。イベントの書式(EVENTS)はセマンティック ID ごとに 1 行で、全 ID を持つ |
 
 - 入力は QNX の公開資料(SDP のヘッダ、TableOfEvents)と traceprinter の出力。
 - QNX の配布物(ヘッダ、TableOfEvents)はリポジトリに入れない。生成した `.rs` はリポジトリに入れる。
