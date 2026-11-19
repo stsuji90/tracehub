@@ -155,11 +155,13 @@ def word_of(args: list[str], keyword: str) -> int:
     raise KeyError(f"{args} に {keyword} がありません")
 
 
-def rows(name: str, items: list[tuple[int, str, str]], doc: str) -> str:
-    """(内部イベント番号, 名前, セマンティック ID の式) の表"""
+def rows(name: str, items: list[tuple[int, str, str]], doc: str, prefix: str) -> str:
+    """(内部イベント番号, 名前, セマンティック ID の式) の表と、名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)"""
     out = [f"/// {doc}", f"pub const {name}: &[(u16, &str, EventId)] = &["]
     out += [f'    ({code}, "{n}", {sem}),' for code, n, sem in items]
     out.append("];")
+    out.append(f"/// {name} の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)")
+    out.append(f'pub const {name}_PREFIX: &str = "{prefix}";')
     return "\n".join(out)
 
 
@@ -300,6 +302,9 @@ def main() -> int:
     out += [f"pub const STRUCT_{n}: u32 = {v};" for n, v in structs]
     out += ["", "// ---- 内部クラス ID(_TRACE_*_C。シフト後の値)"]
     out += [f"pub const CLASS_{n}: u8 = {v};" for n, v in classes]
+    out += ["/// 内部クラス ID → ヘッダの定義名", "pub const CLASS_DEFINE_NAMES: &[(u8, &str)] = &["]
+    out += [f'    ({v}, "_TRACE_{n}_C"),' for n, v in classes]
+    out += ["];"]
     out += ["", "// ---- CONTROL のイベント番号(_TRACE_CONTROL_*)"]
     out += [f"pub const CONTROL_{n}: u16 = {v};" for n, v in control]
     out += [
@@ -319,35 +324,37 @@ def main() -> int:
         f"pub const KERCALL_INT: u16 = {max_kercall << 1:#x};",
         "/// 64 ビット版のビット(KER_CALL と SYSTEM で共通)",
         f"pub const BIT64: u16 = {H.value('_NTO_TRACE_KERCALL64'):#x};",
+        '/// BIT64 のヘッダの定義名',
+        'pub const BIT64_DEFINE_NAME: &str = "_NTO_TRACE_KERCALL64";',
         "",
         "// ---- PR_TH のイベント番号: これより小さければスレッドの状態(_TRACE_PR_TH_CREATE_P)",
         f"pub const PR_TH_PROCESS_BASE: u16 = {pr_th['CREATE_P']};",
         "",
-        rows("KERCALLS", [(v, n, f"semantic_id::kercall::{n}") for n, v in kercalls], "カーネルコール(__KER_*): (コール番号, 名前, セマンティック ID)"),
+        rows("KERCALLS", [(v, n, f"semantic_id::kercall::{n}") for n, v in kercalls], "カーネルコール(__KER_*): (コール番号, 名前, セマンティック ID)", "__KER_"),
         "",
         rows("KERCALLS_64", [(v, n, f"semantic_id::kercall::{n}_64") for n, v in kercalls],
-             "カーネルコールの 64 ビット版(全コール): (コール番号, 名前, セマンティック ID)"),
+             "カーネルコールの 64 ビット版(全コール): (コール番号, 名前, セマンティック ID)", "__KER_"),
         "",
-        rows("THREAD_STATES", [(v, n, f"semantic_id::thread::{n}") for n, v in states], "スレッドの状態(STATE_*)。PR_TH のイベント番号"),
+        rows("THREAD_STATES", [(v, n, f"semantic_id::thread::{n}") for n, v in states], "スレッドの状態(STATE_*)。PR_TH のイベント番号", "STATE_"),
         "",
-        rows("PR_TH_VTHREAD", [(pr_th[n], n, f"semantic_id::thread::{n}") for n in vt_names], "仮想スレッドの生成・破棄(_TRACE_PR_TH_*_VT)"),
+        rows("PR_TH_VTHREAD", [(pr_th[n], n, f"semantic_id::thread::{n}") for n in vt_names], "仮想スレッドの生成・破棄(_TRACE_PR_TH_*_VT)", "_TRACE_PR_TH_"),
         "",
-        rows("PR_TH_PROCESS", [(pr_th[n], n, f"semantic_id::process::{n}") for n in proc_names], "プロセスのイベント(_TRACE_PR_TH_*)"),
+        rows("PR_TH_PROCESS", [(pr_th[n], n, f"semantic_id::process::{n}") for n in proc_names], "プロセスのイベント(_TRACE_PR_TH_*)", "_TRACE_PR_TH_"),
         "",
-        rows("CONTROL_EVENTS", [(v, n, f"semantic_id::control::{n}") for n, v in control], "CONTROL のイベント"),
+        rows("CONTROL_EVENTS", [(v, n, f"semantic_id::control::{n}") for n, v in control], "CONTROL のイベント", "_TRACE_CONTROL_"),
         "",
-        rows("INT_EVENTS", [(v, n, f"semantic_id::int::{n}") for n, v in ints], "INT のイベント(_TRACE_INT_*)"),
+        rows("INT_EVENTS", [(v, n, f"semantic_id::int::{n}") for n, v in ints], "INT のイベント(_TRACE_INT_*)", "_TRACE_INT_"),
         "",
-        rows("SYSTEM_EVENTS", [(v, n, f"semantic_id::system::{n}") for n, v in system], "SYSTEM のイベント(_NTO_TRACE_SYS_*)"),
+        rows("SYSTEM_EVENTS", [(v, n, f"semantic_id::system::{n}") for n, v in system], "SYSTEM のイベント(_NTO_TRACE_SYS_*)", "_NTO_TRACE_SYS_"),
         "",
         rows("SYSTEM_EVENTS_64", [(v, n, f"semantic_id::system::{n}_64") for n, v in system64],
-             "SYSTEM の 64 ビット版(_NTO_TRACE_SYS_*_64、TableOfEvents の |_NTO_TRACE_KERCALL64): (BIT64 を足した番号, 名前, セマンティック ID)"),
+             "SYSTEM の 64 ビット版(_NTO_TRACE_SYS_*_64、TableOfEvents の |_NTO_TRACE_KERCALL64): (BIT64 を足した番号, 名前, セマンティック ID)", "_NTO_TRACE_SYS_"),
         "",
-        rows("COMM_EVENTS", [(v, n, f"semantic_id::comm::{n}") for n, v in comm], "COMM のイベント(_NTO_TRACE_COMM_*)"),
+        rows("COMM_EVENTS", [(v, n, f"semantic_id::comm::{n}") for n, v in comm], "COMM のイベント(_NTO_TRACE_COMM_*)", "_NTO_TRACE_COMM_"),
         "",
-        rows("SEC_EVENTS", [(v, n, f"semantic_id::sec::{n}") for n, v in sec], "SEC のイベント(_NTO_TRACE_SEC_*)"),
+        rows("SEC_EVENTS", [(v, n, f"semantic_id::sec::{n}") for n, v in sec], "SEC のイベント(_NTO_TRACE_SEC_*)", "_NTO_TRACE_SEC_"),
         "",
-        rows("QVM_EVENTS", [(v, n, f"semantic_id::qvm::{n}") for n, v in qvm], "QVM のイベント(_NTO_TRACE_QVM_*)"),
+        rows("QVM_EVENTS", [(v, n, f"semantic_id::qvm::{n}") for n, v in qvm], "QVM のイベント(_NTO_TRACE_QVM_*)", "_NTO_TRACE_QVM_"),
         "",
     ]
     text = "\n".join(out)

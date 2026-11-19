@@ -211,7 +211,7 @@ python tests/kev/tools/event_catalog.py [--qnx 800] --table <TableOfEvents.txt> 
 
 | 列 | 内容 |
 |---|---|
-| クラス・イベント・class_id・event_id・内部 ID | セマンティック ID と、対応する内部 ID |
+| クラス・イベント・class_id・event_id・内部 ID・定義名 | セマンティック ID と、対応する内部 ID(値とヘッダの定義名。例: `_TRACE_KER_CALL_C / __KER_MSG_SENDV`) |
 | 表示名 | traceprinter の表示クラス名・表示イベント名 |
 | fast の書式・wide の書式 | args.rs の書式(要素の並び。fast が無く wide を使うものは「wide と同じ」、custom はラベルを拾って示す) |
 | 出力の例 | 合成 kev での出力(traceprinter と一致を確かめたもの) |

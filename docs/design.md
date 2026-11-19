@@ -280,11 +280,11 @@ QNX 8.0 の kev で、CPU 0 の MSG_SENDV の呼び出し(S のスロット 1 �
 
 | word | 値 | 意味 |
 |---|---|---|
-| 0(header) | `0x0000080b` | 構造 S(ビット 30〜31 = 0)、CPU 0、フラグ 0、内部クラス 2(KER_CALL。ビット 10〜14)、内部イベント番号 11(ビット 0〜9) |
+| 0(header) | `0x0000080b` | 構造 S(`_TRACE_STRUCT_S`)、CPU 0、フラグ 0、内部クラス `_TRACE_KER_CALL_C`、内部イベント番号 `__KER_MSG_SENDV`(enter なので種別のビットなし)。ビットの位置は §6.2.1 |
 | 1 | `0x00000100` | timestamp_cycles_low32 |
 | 2・3 | `0x00000003`・`0x41414141` | payloads |
 
-1. **parse()**: header から内部 ID (2, 11) を取り出し、`semantic_ids()` で (`KER_CALL_ENTER`, `kercall::MSG_SENDV`) にする(enter / exit / int のビットが無いので ENTER)。時刻は TIME で補った 64 ビット。
+1. **parse()**: header から内部 ID (`_TRACE_KER_CALL_C`, `__KER_MSG_SENDV`) を取り出し、`semantic_ids()` で (`KER_CALL_ENTER`, `kercall::MSG_SENDV`) にする(enter / exit / int のビットが無いので ENTER)。時刻は TIME で補った 64 ビット。
    → `TraceEvent { class_id: KER_CALL_ENTER, event_id: MSG_SENDV, int_class_id: 2, int_event_id: 11, payloads: [3, 0x41414141], combine_status: Complete, display_status: Display, … }`
 2. **decode()**: args.rs の EVENTS から `ev(ClassId::KER_CALL_ENTER, kercall::MSG_SENDV)` の行を引く。payloads が 2 語なので fast の書式 `[h("coid", 0), s("msg[0]", 1, 1)]` を当てはめる。表示名は KER_CALL の規則で `MSG_SENDV/11`。
    → `DecodedEvent { class_name: "KER_CALL", event_name: "MSG_SENDV/11", args: " coid:0x00000003 msg[0]:\"AAAA\" (0x41414141)" }`
@@ -314,6 +314,47 @@ struct Slot {
 
 - syspage の後ろから 16 バイトずつ、リトルエンディアンで読む。
 - 16 バイトに満たない末尾は読まず、TrailingBytes を記録する。
+
+### 6.2.1 header の各部と内部 ID
+
+header(スロットの word[0])の各部は、QNX のヘッダ(`sys/trace.h`)のマクロで取り出す。gen_qnx_def.py がマクロの本文からシフトとマスクを取り、def.rs に書く。ロジックは def.rs の名前だけを使う(`event_parser.rs` の `header_bits`)。
+
+| 部分 | ヘッダの定義 | def.rs | QNX 8.0 のビット |
+|---|---|---|---|
+| 構造 | `_TRACE_GET_STRUCT`。値は `_TRACE_STRUCT_S`・`_CB`・`_CC`・`_CE` | `STRUCT_SHIFT`・`STRUCT_MASK`・`STRUCT_*` | 30〜31 |
+| CPU | `_NTO_TRACE_GETCPU` | `CPU_SHIFT`・`CPU_MASK` | 24〜29 |
+| フラグ | `_NTO_TRACE_PROCESS_INJECTED` のビットから CPU の手前まで | `FLAGS_SHIFT`・`FLAGS_MASK`・`FLAG_PROCESS_INJECTED` | 16〜23 |
+| 内部クラス | `_NTO_TRACE_GETEVENT_C`。値は `_TRACE_*_C`(def.rs にはシフト後の値) | `CLASS_SHIFT`・`CLASS_MASK`・`CLASS_*`・`CLASS_DEFINE_NAMES` | 10〜14 |
+| 内部イベント番号 | `_NTO_TRACE_GETEVENT` | `EVENT_SHIFT`・`EVENT_MASK` | 0〜9 |
+
+内部イベント番号の意味は、内部クラスごとに違う。
+
+| 内部クラス | 内部イベント番号 | def.rs |
+|---|---|---|
+| `_TRACE_CONTROL_C` | `_TRACE_CONTROL_TIME`・`_BUFFER`・`_BUFFER_END`・`_DROPPED` | `CONTROL_*`・`CONTROL_EVENTS` |
+| `_TRACE_KER_CALL_C` | コール番号 `__KER_*` に、種別と 64 ビット版のビットを足したもの(下の表) | `KERCALLS`・`KERCALLS_64`・`KERCALL_*`・`BIT64` |
+| `_TRACE_INT_C` | `_TRACE_INT_*` | `INT_EVENTS` |
+| `_TRACE_PR_TH_C` | `_TRACE_PR_TH_CREATE_P` より小さい番号はスレッドの状態 `STATE_*`。ほかは `_TRACE_PR_TH_*`(仮想スレッドの `*_VT` と、プロセスの生成・破棄・名前) | `THREAD_STATES`・`PR_TH_VTHREAD`・`PR_TH_PROCESS`・`PR_TH_PROCESS_BASE` |
+| `_TRACE_SYSTEM_C` | `_NTO_TRACE_SYS_*`。64 ビット版は `_NTO_TRACE_KERCALL64` のビットを足したもの | `SYSTEM_EVENTS`・`SYSTEM_EVENTS_64` |
+| `_TRACE_USER_C`・`_TRACE_QUIP_C` | アプリが決める任意の番号 | (表は無い) |
+| `_TRACE_COMM_C` | `_NTO_TRACE_COMM_*` | `COMM_EVENTS` |
+| `_TRACE_SEC_C` | `_NTO_TRACE_SEC_*` | `SEC_EVENTS` |
+| `_TRACE_QVM_C` | `_NTO_TRACE_QVM_*` | `QVM_EVENTS` |
+| 上のどれでもない(0・未定義の番号) | — | (traceprinter は UNKNOW の診断の行を出す。§9.3) |
+
+カーネルコールの内部イベント番号:
+
+| ビット | ヘッダの定義 | def.rs | QNX 8.0 の値 |
+|---|---|---|---|
+| コール番号 | `__KER_*`(`_NTO_TRACE_KERCALLMASK` の範囲) | `KERCALL_NUM_MASK` | 0x7f のマスク |
+| 戻り(exit) | `_TRACE_MAX_KER_CALL_NUM` | `KERCALL_EXIT` | 0x80 |
+| 割り込まれ(int) | `_TRACE_MAX_KER_CALL_NUM << 1` | `KERCALL_INT` | 0x100 |
+| 64 ビット版 | `_NTO_TRACE_KERCALL64` | `BIT64` | 0x200 |
+
+例(QNX 8.0): `__KER_NOP`(0)の enter / exit / int は 0x000 / 0x080 / 0x100、`__KER_MSG_SENDV`(11)は 0x00b / 0x08b / 0x10b、その 64 ビット版は 0x20b / 0x28b / 0x30b。
+exit と int の両方のビットが立ったものは、ヘッダに定義が無い(セマンティック ID のクラスが UNKNOWN になる)。
+
+CONTROL の payloads の位置(TIME の上位・下位、BUFFER の通番・スロット数、DROPPED の数)はヘッダに定義が無く、TableOfEvents の引数名から取る(def.rs の `*_WORD`)。BUFFER_END の payloads は `_TRACECOOKIE`(def.rs の `BUFFER_COOKIE`)。
 
 ### 6.3 reconstruct_timestamp
 
@@ -359,8 +400,18 @@ merge した順にスロットを処理し、項目を待ち行列に入れて�
 
 ### 6.7 セマンティック ID と display_status
 
-- 版の定義(def.rs の表)で、(内部クラス, 内部イベント番号) → (class_id, event_id) を引く。無ければ UNKNOWN(§8)。
-- display_status は、traceprinter がイベントの行または診断の行を出すかと、定義の有無で決める(§5.3。イベントの行は event_decoder の書式の選択と同じ規則)。
+内部 ID → セマンティック ID は、版の def.rs の表で引く(`event_parser.rs` の `semantic_ids`)。逆向きは `internal_ids`。
+
+| 内部クラス | 手順 |
+|---|---|
+| `_TRACE_KER_CALL_C` | 1. 種別のビット(exit・int)でクラスを決める: どちらも無ければ `KER_CALL_ENTER`、exit なら `KER_CALL_EXIT`、int なら `KER_CALL_INT`、両方なら UNKNOWN。<br>2. 64 ビットのビットがあれば `KERCALLS_64`、無ければ `KERCALLS` で、コール番号(`KERCALL_NUM_MASK` の範囲)を引く。無ければ event_id は UNKNOWN |
+| `_TRACE_PR_TH_C` | `PR_TH_PROCESS` にあれば `PROCESS`。無ければ `THREAD` で、`THREAD_STATES`・`PR_TH_VTHREAD` の順に引く。どちらにも無ければ event_id は UNKNOWN |
+| `_TRACE_USER_C`・`_TRACE_QUIP_C` | `USER`・`QUIP`。event_id は内部イベント番号そのもの |
+| CONTROL・INT・SYSTEM・COMM・SEC・QVM | クラスの表(SYSTEM は 64 ビット版の表も)で引く。無ければ event_id は UNKNOWN |
+| それ以外 | class_id も event_id も UNKNOWN |
+
+- 内部クラスとセマンティックなクラスは 1 対 1 ではない(KER_CALL は 3 つ、PR_TH は THREAD と PROCESS に分かれる)。
+- display_status は、traceprinter がイベントの行または診断の行を出すかと、定義の有無で決める(§5.3。イベントの行を出すかは event_decoder の `format` と同じ規則。§7.1.1)。
 
 ---
 

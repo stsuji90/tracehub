@@ -8,7 +8,7 @@
 //!
 //! scenarios: 試験用の合成データ(kevcsv の CSV)をディレクトリに書く。
 //!
-//! catalog: 確認用のイベント一覧を TSV で標準出力に書く。列: class_id, class, event_id, event, int_class, int_event, display_class, display_name,
+//! catalog: 確認用のイベント一覧を TSV で標準出力に書く。列: class_id, class, event_id, event, int_class, int_event, define_name, display_class, display_name,
 //!     fast, wide, fast_labels, wide_labels, synthetic, synthetic_displayed, example_fast, example_wide,
 //!     real, real_displayed(実機の kev の件数の合計)
 //! 実機の kev で読めないものは標準エラーに書いて飛ばす。
@@ -56,7 +56,7 @@ macro_rules! write_catalog {
         }
     }
     println!(
-        "class_id\tclass\tevent_id\tevent\tint_class\tint_event\tdisplay_class\tdisplay_name\tfast\twide\tfast_labels\twide_labels\tsynthetic\tsynthetic_displayed\texample_fast\texample_wide\treal\treal_displayed"
+        "class_id\tclass\tevent_id\tevent\tint_class\tint_event\tdefine_name\tdisplay_class\tdisplay_name\tfast\twide\tfast_labels\twide_labels\tsynthetic\tsynthetic_displayed\texample_fast\texample_wide\treal\treal_displayed"
     );
     for e in t::catalog::entries() {
         let (rn, rd) = real.get(&(e.class_id, e.event_id)).copied().unwrap_or_default();
@@ -67,6 +67,7 @@ macro_rules! write_catalog {
             e.event.clone(),
             e.int_class.to_string(),
             format!("0x{:03x}", e.int_event),
+            e.define_name.clone(),
             e.display_class.clone(),
             e.display_name.clone(),
             e.fast.clone(),

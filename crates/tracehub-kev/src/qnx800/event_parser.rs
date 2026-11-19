@@ -669,6 +669,47 @@ pub(crate) fn internal_ids(class: ClassId, event: EventId) -> Option<(u8, u16)> 
     }
 }
 
+/// セマンティックなクラス ID → ヘッダの内部クラスの定義名(例: "_TRACE_KER_CALL_C")。資料・確認用
+pub(crate) fn class_define_name(class: ClassId) -> Option<&'static str> {
+    let c = internal_class(class)?;
+    def::CLASS_DEFINE_NAMES.iter().find(|r| r.0 == c).map(|r| r.1)
+}
+
+/// セマンティック ID → ヘッダのイベントの定義名(例: "__KER_MSG_SENDV"、"_NTO_TRACE_SYS_IPI | _NTO_TRACE_KERCALL64")。
+/// KER_CALL はコールの定義名(enter / exit / int は内部イベント番号のビットで分かれる。設計書 §6.2.1)。資料・確認用
+pub(crate) fn event_define_name(class: ClassId, event: EventId) -> Option<String> {
+    type T = (&'static [(u16, &'static str, EventId)], &'static str, bool);
+    let tables: &[T] = match class {
+        ClassId::KER_CALL_ENTER | ClassId::KER_CALL_EXIT | ClassId::KER_CALL_INT => &[
+            (def::KERCALLS, def::KERCALLS_PREFIX, false),
+            (def::KERCALLS_64, def::KERCALLS_64_PREFIX, true),
+        ],
+        ClassId::CONTROL => &[(def::CONTROL_EVENTS, def::CONTROL_EVENTS_PREFIX, false)],
+        ClassId::INT => &[(def::INT_EVENTS, def::INT_EVENTS_PREFIX, false)],
+        ClassId::THREAD => &[
+            (def::THREAD_STATES, def::THREAD_STATES_PREFIX, false),
+            (def::PR_TH_VTHREAD, def::PR_TH_VTHREAD_PREFIX, false),
+        ],
+        ClassId::PROCESS => &[(def::PR_TH_PROCESS, def::PR_TH_PROCESS_PREFIX, false)],
+        ClassId::SYSTEM => &[
+            (def::SYSTEM_EVENTS, def::SYSTEM_EVENTS_PREFIX, false),
+            (def::SYSTEM_EVENTS_64, def::SYSTEM_EVENTS_64_PREFIX, true),
+        ],
+        ClassId::COMM => &[(def::COMM_EVENTS, def::COMM_EVENTS_PREFIX, false)],
+        ClassId::SEC => &[(def::SEC_EVENTS, def::SEC_EVENTS_PREFIX, false)],
+        ClassId::QVM => &[(def::QVM_EVENTS, def::QVM_EVENTS_PREFIX, false)],
+        _ => &[],
+    };
+    tables.iter().find_map(|&(t, prefix, bit64)| {
+        let r = t.iter().find(|r| r.2 == event)?;
+        Some(if bit64 {
+            format!("{prefix}{} | {}", r.1, def::BIT64_DEFINE_NAME)
+        } else {
+            format!("{prefix}{}", r.1)
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

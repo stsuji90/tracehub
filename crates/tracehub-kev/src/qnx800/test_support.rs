@@ -1277,7 +1277,7 @@ pub mod catalog {
 
     use super::scenarios;
     use crate::model::{CombineStatus, DisplayStatus, KevFile};
-    use crate::qnx800::event_parser::internal_ids;
+    use crate::qnx800::event_parser::{class_define_name, event_define_name, internal_ids};
     use crate::qnx800::{args, def, event_decoder};
     use crate::semantic_id::{ClassId, EventId};
     use crate::tp_format::{Ev, Item, Op, Spec};
@@ -1293,6 +1293,8 @@ pub mod catalog {
         pub event: String,
         pub int_class: u8,
         pub int_event: u16,
+        /// ヘッダの定義名(内部クラス / イベント。例: "_TRACE_KER_CALL_C / __KER_MSG_SENDV")
+        pub define_name: String,
         /// traceprinter の表示クラス名・表示イベント名
         pub display_class: String,
         pub display_name: String,
@@ -1460,6 +1462,11 @@ pub mod catalog {
                     event: name,
                     int_class: ic,
                     int_event: code,
+                    define_name: format!(
+                        "{} / {}",
+                        class_define_name(c).unwrap_or("?"),
+                        event_define_name(c, e).unwrap_or_else(|| "?".into())
+                    ),
                     display_class: dc.unwrap_or_default(),
                     display_name: dn.unwrap_or_default(),
                     fast,

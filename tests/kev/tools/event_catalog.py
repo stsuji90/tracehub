@@ -210,6 +210,7 @@ def main() -> int:
             "class_id": row["class_id"],
             "event_id": row["event_id"],
             "内部 ID": f"{row['int_class']}/{row['int_event']}",
+            "定義名": row["define_name"],
             "表示名": f"{row['display_class']}:{row['display_name']}",
             "fast の書式": row["fast"],
             "wide の書式": row["wide"],

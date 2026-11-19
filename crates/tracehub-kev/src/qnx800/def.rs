@@ -36,6 +36,19 @@ pub const CLASS_COMM: u8 = 7;
 pub const CLASS_QUIP: u8 = 8;
 pub const CLASS_SEC: u8 = 9;
 pub const CLASS_QVM: u8 = 10;
+/// 内部クラス ID → ヘッダの定義名
+pub const CLASS_DEFINE_NAMES: &[(u8, &str)] = &[
+    (1, "_TRACE_CONTROL_C"),
+    (2, "_TRACE_KER_CALL_C"),
+    (3, "_TRACE_INT_C"),
+    (4, "_TRACE_PR_TH_C"),
+    (5, "_TRACE_SYSTEM_C"),
+    (6, "_TRACE_USER_C"),
+    (7, "_TRACE_COMM_C"),
+    (8, "_TRACE_QUIP_C"),
+    (9, "_TRACE_SEC_C"),
+    (10, "_TRACE_QVM_C"),
+];
 
 // ---- CONTROL のイベント番号(_TRACE_CONTROL_*)
 pub const CONTROL_TIME: u16 = 1;
@@ -58,6 +71,8 @@ pub const KERCALL_EXIT: u16 = 0x80;
 pub const KERCALL_INT: u16 = 0x100;
 /// 64 ビット版のビット(KER_CALL と SYSTEM で共通)
 pub const BIT64: u16 = 0x200;
+/// BIT64 のヘッダの定義名
+pub const BIT64_DEFINE_NAME: &str = "_NTO_TRACE_KERCALL64";
 
 // ---- PR_TH のイベント番号: これより小さければスレッドの状態(_TRACE_PR_TH_CREATE_P)
 pub const PR_TH_PROCESS_BASE: u16 = 64;
@@ -158,6 +173,8 @@ pub const KERCALLS: &[(u16, &str, EventId)] = &[
     (106, "SYS_CUSTOM", semantic_id::kercall::SYS_CUSTOM),
     (107, "BAD", semantic_id::kercall::BAD),
 ];
+/// KERCALLS の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const KERCALLS_PREFIX: &str = "__KER_";
 
 /// カーネルコールの 64 ビット版(全コール): (コール番号, 名前, セマンティック ID)
 pub const KERCALLS_64: &[(u16, &str, EventId)] = &[
@@ -255,6 +272,8 @@ pub const KERCALLS_64: &[(u16, &str, EventId)] = &[
     (106, "SYS_CUSTOM", semantic_id::kercall::SYS_CUSTOM_64),
     (107, "BAD", semantic_id::kercall::BAD_64),
 ];
+/// KERCALLS_64 の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const KERCALLS_64_PREFIX: &str = "__KER_";
 
 /// スレッドの状態(STATE_*)。PR_TH のイベント番号
 pub const THREAD_STATES: &[(u16, &str, EventId)] = &[
@@ -288,12 +307,16 @@ pub const THREAD_STATES: &[(u16, &str, EventId)] = &[
     (28, "INTR_ATTACH_EV", semantic_id::thread::INTR_ATTACH_EV),
     (29, "TIMER_DELEGATE", semantic_id::thread::TIMER_DELEGATE),
 ];
+/// THREAD_STATES の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const THREAD_STATES_PREFIX: &str = "STATE_";
 
 /// 仮想スレッドの生成・破棄(_TRACE_PR_TH_*_VT)
 pub const PR_TH_VTHREAD: &[(u16, &str, EventId)] = &[
     (87, "CREATE_VT", semantic_id::thread::CREATE_VT),
     (88, "DESTROY_VT", semantic_id::thread::DESTROY_VT),
 ];
+/// PR_TH_VTHREAD の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const PR_TH_VTHREAD_PREFIX: &str = "_TRACE_PR_TH_";
 
 /// プロセスのイベント(_TRACE_PR_TH_*)
 pub const PR_TH_PROCESS: &[(u16, &str, EventId)] = &[
@@ -303,6 +326,8 @@ pub const PR_TH_PROCESS: &[(u16, &str, EventId)] = &[
     (256, "DESTROY_P_NAME", semantic_id::process::DESTROY_P_NAME),
     (320, "NAME_T", semantic_id::process::NAME_T),
 ];
+/// PR_TH_PROCESS の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const PR_TH_PROCESS_PREFIX: &str = "_TRACE_PR_TH_";
 
 /// CONTROL のイベント
 pub const CONTROL_EVENTS: &[(u16, &str, EventId)] = &[
@@ -311,11 +336,15 @@ pub const CONTROL_EVENTS: &[(u16, &str, EventId)] = &[
     (4, "BUFFER_END", semantic_id::control::BUFFER_END),
     (8, "DROPPED", semantic_id::control::DROPPED),
 ];
+/// CONTROL_EVENTS の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const CONTROL_EVENTS_PREFIX: &str = "_TRACE_CONTROL_";
 
 /// INT のイベント(_TRACE_INT_*)
 pub const INT_EVENTS: &[(u16, &str, EventId)] = &[
     (7, "DELIVER", semantic_id::int::DELIVER),
 ];
+/// INT_EVENTS の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const INT_EVENTS_PREFIX: &str = "_TRACE_INT_";
 
 /// SYSTEM のイベント(_NTO_TRACE_SYS_*)
 pub const SYSTEM_EVENTS: &[(u16, &str, EventId)] = &[
@@ -351,6 +380,8 @@ pub const SYSTEM_EVENTS: &[(u16, &str, EventId)] = &[
     (30, "IST_DETACH", semantic_id::system::IST_DETACH),
     (31, "PCTRACE", semantic_id::system::PCTRACE),
 ];
+/// SYSTEM_EVENTS の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const SYSTEM_EVENTS_PREFIX: &str = "_NTO_TRACE_SYS_";
 
 /// SYSTEM の 64 ビット版(_NTO_TRACE_SYS_*_64、TableOfEvents の |_NTO_TRACE_KERCALL64): (BIT64 を足した番号, 名前, セマンティック ID)
 pub const SYSTEM_EVENTS_64: &[(u16, &str, EventId)] = &[
@@ -360,6 +391,8 @@ pub const SYSTEM_EVENTS_64: &[(u16, &str, EventId)] = &[
     (528, "IPI", semantic_id::system::IPI_64),
     (532, "PROFILE", semantic_id::system::PROFILE_64),
 ];
+/// SYSTEM_EVENTS_64 の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const SYSTEM_EVENTS_64_PREFIX: &str = "_NTO_TRACE_SYS_";
 
 /// COMM のイベント(_NTO_TRACE_COMM_*)
 pub const COMM_EVENTS: &[(u16, &str, EventId)] = &[
@@ -376,6 +409,8 @@ pub const COMM_EVENTS: &[(u16, &str, EventId)] = &[
     (10, "REPLY", semantic_id::comm::REPLY),
     (11, "ERROR", semantic_id::comm::ERROR),
 ];
+/// COMM_EVENTS の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const COMM_EVENTS_PREFIX: &str = "_NTO_TRACE_COMM_";
 
 /// SEC のイベント(_NTO_TRACE_SEC_*)
 pub const SEC_EVENTS: &[(u16, &str, EventId)] = &[
@@ -388,6 +423,8 @@ pub const SEC_EVENTS: &[(u16, &str, EventId)] = &[
     (6, "UNREG_EVENT", semantic_id::sec::UNREG_EVENT),
     (7, "OPEN_EVENT", semantic_id::sec::OPEN_EVENT),
 ];
+/// SEC_EVENTS の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const SEC_EVENTS_PREFIX: &str = "_NTO_TRACE_SEC_";
 
 /// QVM のイベント(_NTO_TRACE_QVM_*)
 pub const QVM_EVENTS: &[(u16, &str, EventId)] = &[
@@ -400,3 +437,5 @@ pub const QVM_EVENTS: &[(u16, &str, EventId)] = &[
     (6, "TIMER_FIRE", semantic_id::qvm::TIMER_FIRE),
     (7, "CYCLES", semantic_id::qvm::CYCLES),
 ];
+/// QVM_EVENTS の名前の接頭辞(ヘッダの定義名 = 接頭辞 + 名前)
+pub const QVM_EVENTS_PREFIX: &str = "_NTO_TRACE_QVM_";

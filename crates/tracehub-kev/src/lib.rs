@@ -113,7 +113,7 @@ pub mod traceprinter {
 }
 
 /// docs/semantic-id.md の一覧(生成部分)が、semantic_id.rs と版ごとの定義に合っているかの試験。
-/// 合っていなければ失敗する。`TRACEHUB_UPDATE_DOCS=1 cargo test` で書き直す。版を足すときは VERSIONS と internal に足す。
+/// 合っていなければ失敗する。`TRACEHUB_UPDATE_DOCS=1 cargo test` で書き直す。版を足すときは VERSIONS・class_define・event_define に足す。
 #[cfg(test)]
 mod semantic_id_doc {
     use super::*;
@@ -124,14 +124,15 @@ mod semantic_id_doc {
     const END: &str = "<!-- 生成部分ここまで -->";
     const VERSIONS: &[(QnxVersion, &str)] = &[(QnxVersion::V800, "8.0")];
 
-    fn internal(v: QnxVersion, c: ClassId, e: EventId) -> Option<(u8, u16)> {
+    /// その版のヘッダの定義名(内部クラス・イベント)
+    fn class_define(v: QnxVersion, c: ClassId) -> Option<String> {
         match v {
-            QnxVersion::V800 => qnx800::event_parser::internal_ids(c, e),
+            QnxVersion::V800 => qnx800::event_parser::class_define_name(c).map(String::from),
         }
     }
-    fn internal_class(v: QnxVersion, c: ClassId) -> Option<u8> {
+    fn event_define(v: QnxVersion, c: ClassId, e: EventId) -> Option<String> {
         match v {
-            QnxVersion::V800 => qnx800::event_parser::internal_class(c),
+            QnxVersion::V800 => qnx800::event_parser::event_define_name(c, e),
         }
     }
 
@@ -176,10 +177,15 @@ mod semantic_id_doc {
     fn generate() -> String {
         use std::fmt::Write as _;
         let dash = |s: Option<String>| s.filter(|s| !s.is_empty()).unwrap_or_else(|| "—".into());
+        // 表の中の | はエスケープする
+        let code = |s: Option<String>| {
+            s.map(|x| format!("`{}`", x.replace('|', r"\|")))
+                .unwrap_or_else(|| "—".into())
+        };
         let mut s = String::new();
         let vh: String = VERSIONS
             .iter()
-            .map(|(_, n)| format!(" QNX {n}: 内部クラス | QNX {n}: 表示クラス名 |"))
+            .map(|(_, n)| format!(" QNX {n}: 定義名 | QNX {n}: 表示クラス名 |"))
             .collect();
         let vs: String = VERSIONS.iter().map(|_| "---|---|").collect();
         writeln!(s, "### クラス\n\n| class_id | 定数 |{vh}\n|---|---|{vs}").unwrap();
@@ -187,19 +193,17 @@ mod semantic_id_doc {
             let cols: String = VERSIONS
                 .iter()
                 .map(|&(v, _)| {
-                    let ic = dash(internal_class(v, c).map(|x| x.to_string()));
-                    format!(" {ic} | {} |", dash(class_name(v, c).map(String::from)))
+                    format!(
+                        " {} | {} |",
+                        code(class_define(v, c)),
+                        dash(class_name(v, c).map(String::from))
+                    )
                 })
                 .collect();
             writeln!(s, "| {} | `{name}` |{cols}", c.0).unwrap();
         }
-        writeln!(
-            s,
-            "| {} | `UNKNOWN` |{}",
-            ClassId::UNKNOWN.0,
-            VERSIONS.iter().map(|_| " — | — |").collect::<String>()
-        )
-        .unwrap();
+        let none: String = VERSIONS.iter().map(|_| " — | — |").collect();
+        writeln!(s, "| {} | `UNKNOWN` |{none}", ClassId::UNKNOWN.0).unwrap();
         let mut total = 0;
         for (m, doc, consts) in modules() {
             let classes = classes_of(&m);
@@ -215,16 +219,16 @@ mod semantic_id_doc {
             let mut head = "| event_id | 定数 |".to_string();
             let mut sep = "|---|---|".to_string();
             for &(v, n) in VERSIONS {
-                if classes.len() == 1 {
-                    head += &format!(" QNX {n}: 内部イベント番号 | QNX {n}: 表示名 |");
-                    sep += "---|---|";
-                } else {
-                    head += &format!(" QNX {n}: 内部イベント番号 |");
+                head += &format!(" QNX {n}: 定義名 |");
+                sep += "---|";
+                for c in classes {
+                    let d = if classes.len() == 1 {
+                        "表示名".to_string()
+                    } else {
+                        format!("表示名({})", class_name(v, *c).unwrap_or("?"))
+                    };
+                    head += &format!(" QNX {n}: {d} |");
                     sep += "---|";
-                    for c in classes {
-                        head += &format!(" QNX {n}: 表示名({}) |", class_name(v, *c).unwrap_or("?"));
-                        sep += "---|";
-                    }
                 }
             }
             writeln!(s, "{head}\n{sep}").unwrap();
@@ -232,11 +236,7 @@ mod semantic_id_doc {
                 let e = EventId(n);
                 let mut row = format!("| {n} | `{m}::{name}` |");
                 for &(v, _) in VERSIONS {
-                    let codes: Vec<String> = classes
-                        .iter()
-                        .map(|&c| dash(internal(v, c, e).map(|(_, x)| format!("0x{x:03x}"))))
-                        .collect();
-                    row += &format!(" {} |", codes.join(" / "));
+                    row += &format!(" {} |", code(event_define(v, classes[0], e)));
                     for &c in classes {
                         row += &format!(" {} |", dash(event_name(v, c, e)));
                     }
